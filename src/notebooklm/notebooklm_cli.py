@@ -1684,10 +1684,14 @@ def generate_quiz(ctx, description, notebook_id, quantity, difficulty, wait):
 
         status = run_async(_generate())
 
-        if hasattr(status, "is_complete") and status.is_complete:
+        if not status:
+            console.print("[red]Quiz generation failed (Google may be rate limiting)[/red]")
+        elif hasattr(status, "is_complete") and status.is_complete:
             console.print("[green]Quiz ready[/green]")
+        elif hasattr(status, "is_failed") and status.is_failed:
+            console.print(f"[red]Failed:[/red] {status.error}")
         else:
-            console.print(f"[yellow]Result:[/yellow] {status}")
+            console.print(f"[yellow]Started:[/yellow] {status}")
 
     except Exception as e:
         handle_error(e)
@@ -1735,10 +1739,14 @@ def generate_flashcards(ctx, description, notebook_id, quantity, difficulty, wai
 
         status = run_async(_generate())
 
-        if hasattr(status, "is_complete") and status.is_complete:
+        if not status:
+            console.print("[red]Flashcard generation failed (Google may be rate limiting)[/red]")
+        elif hasattr(status, "is_complete") and status.is_complete:
             console.print("[green]Flashcards ready[/green]")
+        elif hasattr(status, "is_failed") and status.is_failed:
+            console.print(f"[red]Failed:[/red] {status.error}")
         else:
-            console.print(f"[yellow]Result:[/yellow] {status}")
+            console.print(f"[yellow]Started:[/yellow] {status}")
 
     except Exception as e:
         handle_error(e)
@@ -1787,10 +1795,14 @@ def generate_infographic(ctx, description, notebook_id, orientation, detail, lan
 
         status = run_async(_generate())
 
-        if hasattr(status, "is_complete") and status.is_complete:
+        if not status:
+            console.print("[red]Infographic generation failed (Google may be rate limiting)[/red]")
+        elif hasattr(status, "is_complete") and status.is_complete:
             console.print("[green]Infographic ready[/green]")
+        elif hasattr(status, "is_failed") and status.is_failed:
+            console.print(f"[red]Failed:[/red] {status.error}")
         else:
-            console.print(f"[yellow]Result:[/yellow] {status}")
+            console.print(f"[yellow]Started:[/yellow] {status}")
 
     except Exception as e:
         handle_error(e)
@@ -1831,10 +1843,14 @@ def generate_data_table(ctx, description, notebook_id, language, wait):
 
         status = run_async(_generate())
 
-        if hasattr(status, "is_complete") and status.is_complete:
+        if not status:
+            console.print("[red]Data table generation failed (Google may be rate limiting)[/red]")
+        elif hasattr(status, "is_complete") and status.is_complete:
             console.print("[green]Data table ready[/green]")
+        elif hasattr(status, "is_failed") and status.is_failed:
+            console.print(f"[red]Failed:[/red] {status.error}")
         else:
-            console.print(f"[yellow]Result:[/yellow] {status}")
+            console.print(f"[yellow]Started:[/yellow] {status}")
 
     except Exception as e:
         handle_error(e)
