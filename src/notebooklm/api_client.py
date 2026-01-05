@@ -639,13 +639,13 @@ class NotebookLMClient:
             allow_null=True,
         )
 
-    async def mutate_source(
+    async def update_source(
         self, notebook_id: str, source_id: str, updates: dict
     ) -> Any:
         """Update source metadata (e.g., enabled state)."""
         params = [source_id, updates]
         return await self._rpc_call(
-            RPCMethod.MUTATE_SOURCE,
+            RPCMethod.UPDATE_SOURCE,
             params,
             source_path=f"/notebook/{notebook_id}",
             allow_null=True,
@@ -657,7 +657,7 @@ class NotebookLMClient:
         """Rename a source."""
         params = [None, [source_id], [[[new_title]]]]
         return await self._rpc_call(
-            RPCMethod.MUTATE_SOURCE,
+            RPCMethod.UPDATE_SOURCE,
             params,
             source_path=f"/notebook/{notebook_id}",
             allow_null=True,
@@ -1878,7 +1878,7 @@ class NotebookLMClient:
             source_path=f"/notebook/{notebook_id}",
         )
 
-    async def save_note_content(
+    async def update_note(
         self,
         notebook_id: str,
         note_id: str,
@@ -1892,7 +1892,7 @@ class NotebookLMClient:
             [[[content, title, [], 0]]],
         ]
         return await self._rpc_call(
-            RPCMethod.MUTATE_NOTE,
+            RPCMethod.UPDATE_NOTE,
             params,
             source_path=f"/notebook/{notebook_id}",
             allow_null=True,
@@ -1922,7 +1922,7 @@ class NotebookLMClient:
                     note_id = result[0]
 
             if note_id:
-                await self.save_note_content(notebook_id, note_id, content, title)
+                await self.update_note(notebook_id, note_id, content, title)
 
         return result
 

@@ -2807,7 +2807,7 @@ def note_save(ctx, note_id, notebook_id, title, content):
 
         async def _save():
             async with NotebookLMClient(auth) as client:
-                return await client.save_note_content(nb_id, note_id, content=content, title=title)
+                return await client.update_note(nb_id, note_id, content=content, title=title)
 
         run_async(_save())
         console.print(f"[green]Note updated:[/green] {note_id}")
@@ -2836,7 +2836,7 @@ def note_rename(ctx, note_id, new_title, notebook_id):
                     return None
                 # Extract current content using parser
                 _, _, content = _parse_note(note)
-                return await client.save_note_content(nb_id, note_id, content=content, title=new_title)
+                return await client.update_note(nb_id, note_id, content=content, title=new_title)
 
         result = run_async(_rename())
         if result is None:

@@ -28,7 +28,7 @@ class RPCMethod(str, Enum):
     GET_SOURCE = "hizoJc"
     REFRESH_SOURCE = "FLmJqe"
     CHECK_SOURCE_FRESHNESS = "yR9Yof"
-    MUTATE_SOURCE = "b7Wfje"
+    UPDATE_SOURCE = "b7Wfje"
     DISCOVER_SOURCES = "qXyaNe"
 
     # Summary and query
@@ -61,7 +61,7 @@ class RPCMethod(str, Enum):
     GET_NOTES = "cFji9"
 
     # Note operations
-    MUTATE_NOTE = "cYAfTb"
+    UPDATE_NOTE = "cYAfTb"
     DELETE_NOTE = "AH0mwd"
 
     # Artifact management
