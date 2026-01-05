@@ -70,7 +70,14 @@ class ConversationService:
             limit: Maximum number of turns to retrieve
 
         Returns:
-            Server-side conversation history
+            List of conversation IDs (not full content)
+
+        Note:
+            TODO: The current GET_CONVERSATION_HISTORY RPC only returns conversation
+            IDs, not the actual Q&A content. To get full conversation messages,
+            we need to discover the RPC method used by the NotebookLM web UI
+            when displaying chat history. Capture network traffic from the web UI
+            to find this endpoint.
         """
         return await self._client.get_conversation_history(notebook_id, limit)
 

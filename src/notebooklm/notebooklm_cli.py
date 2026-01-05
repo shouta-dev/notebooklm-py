@@ -643,6 +643,9 @@ def history_shortcut(ctx, notebook_id, limit, clear):
         history = run_async(_get())
         if history:
             console.print(f"[bold cyan]Conversation History:[/bold cyan]")
+            # TODO: The API only returns conversation IDs, not full Q&A content.
+            # To show actual messages, discover the RPC method used by NotebookLM
+            # web UI when displaying chat history.
             # Parse the nested response structure: [[['conv_id'], ...]]
             try:
                 conversations = history[0] if history else []
@@ -654,7 +657,7 @@ def history_shortcut(ctx, notebook_id, limit, clear):
                         conv_id = conv[0] if isinstance(conv, list) and conv else str(conv)
                         table.add_row(str(i), conv_id)
                     console.print(table)
-                    console.print(f"\n[dim]Use 'notebooklm ask -c <conversation_id>' to continue a conversation[/dim]")
+                    console.print(f"\n[dim]Note: Only conversation IDs available. Use 'notebooklm ask -c <id>' to continue.[/dim]")
                 else:
                     console.print("[yellow]No conversations found[/yellow]")
             except (IndexError, TypeError):
