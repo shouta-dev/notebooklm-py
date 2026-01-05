@@ -69,6 +69,30 @@ ARTIFACT_TYPE_DISPLAY = {
     9: "📋 Data Table",
 }
 
+# CLI artifact type to StudioContentType enum mapping
+ARTIFACT_TYPE_MAP = {
+    "video": 3,
+    "slide-deck": 8,
+    "quiz": 4,
+    "flashcard": 4,  # Same as quiz
+    "infographic": 7,
+    "data-table": 9,
+    "mind-map": 5,
+    "report": 2,
+}
+
+
+def get_artifact_type_display(artifact_type: int) -> str:
+    """Get display string for artifact type.
+
+    Args:
+        artifact_type: StudioContentType enum value
+
+    Returns:
+        Display string with emoji
+    """
+    return ARTIFACT_TYPE_DISPLAY.get(artifact_type, f"Unknown ({artifact_type})")
+
 
 def detect_source_type(src: list) -> str:
     """Detect source type from API data structure.
@@ -1040,32 +1064,19 @@ def artifact_list(ctx, notebook_id, artifact_type):
         cookies, csrf, session_id = get_client(ctx)
         auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
 
+        # Get type filter (None for "all", enum value for specific types)
+        type_filter = None if artifact_type == "all" else ARTIFACT_TYPE_MAP.get(artifact_type)
+
         async def _list():
             async with NotebookLMClient(auth) as client:
-                if artifact_type == "all":
-                    return await client.list_artifacts(nb_id), "all"
-                elif artifact_type == "video":
-                    return await client.list_video_overviews(nb_id), "video"
-                elif artifact_type == "slide-deck":
-                    return await client.list_slide_decks(nb_id), "slide-deck"
-                elif artifact_type == "quiz":
-                    return await client.list_quizzes(nb_id), "quiz"
-                elif artifact_type == "flashcard":
-                    return await client.list_flashcards(nb_id), "flashcard"
-                elif artifact_type == "infographic":
-                    return await client.list_infographics(nb_id), "infographic"
-                elif artifact_type == "data-table":
-                    return await client.list_data_tables(nb_id), "data-table"
-                elif artifact_type == "mind-map":
-                    return await client.list_mind_maps(nb_id), "mind-map"
-                elif artifact_type == "report":
-                    return await client.list_reports(nb_id), "report"
-                return [], artifact_type
+                from .services.artifacts import ArtifactService
+                service = ArtifactService(client)
+                return await service.list(nb_id, artifact_type=type_filter)
 
-        artifacts, atype = run_async(_list())
+        artifacts = run_async(_list())
 
         if not artifacts:
-            console.print(f"[yellow]No {atype} artifacts found[/yellow]")
+            console.print(f"[yellow]No {artifact_type} artifacts found[/yellow]")
             return
 
         table = Table(title=f"Artifacts in {nb_id}")
@@ -1076,30 +1087,10 @@ def artifact_list(ctx, notebook_id, artifact_type):
         table.add_column("Status", style="yellow")
 
         for art in artifacts:
-            if isinstance(art, list) and len(art) > 0:
-                # Artifact structure: [id, title, type, ..., status, ..., created_at_list, ...]
-                # Index 15 contains [seconds, nanoseconds] for creation time
-                art_id = str(art[0] or "-")
-                title = str(art[1] if len(art) > 1 else "-")
-                type_id = art[2] if len(art) > 2 else None
-                status_code = art[4] if len(art) > 4 else None
-                created_at_list = art[15] if len(art) > 15 else None
-
-                # Format type
-                type_display = ARTIFACT_TYPE_DISPLAY.get(type_id, f"Unknown ({type_id})" if type_id else "-")
-
-                # Format timestamp - extract seconds from [seconds, nanoseconds] list
-                if created_at_list and isinstance(created_at_list, list) and len(created_at_list) > 0:
-                    created = datetime.fromtimestamp(created_at_list[0]).strftime("%Y-%m-%d %H:%M")
-                else:
-                    created = "-"
-
-                # Format status
-                status = "completed" if status_code == 3 else "processing" if status_code == 1 else str(status_code) if status_code else "-"
-
-                table.add_row(art_id, title, type_display, created, status)
-            elif isinstance(art, dict):
-                table.add_row(art.get("id", "-"), art.get("title", "-"), "-", "-", "-")
+            type_display = get_artifact_type_display(art.artifact_type)
+            created = art.created_at.strftime("%Y-%m-%d %H:%M") if art.created_at else "-"
+            status = "completed" if art.is_completed else "processing" if art.is_processing else str(art.status)
+            table.add_row(art.id, art.title, type_display, created, status)
 
         console.print(table)
 
@@ -1121,12 +1112,18 @@ def artifact_get(ctx, artifact_id, notebook_id):
 
         async def _get():
             async with NotebookLMClient(auth) as client:
-                return await client.get_artifact(nb_id, artifact_id)
+                from .services.artifacts import ArtifactService
+                service = ArtifactService(client)
+                return await service.get(nb_id, artifact_id)
 
         artifact = run_async(_get())
         if artifact:
-            console.print("[bold cyan]Artifact Details:[/bold cyan]")
-            console.print(artifact)
+            console.print(f"[bold cyan]Artifact:[/bold cyan] {artifact.id}")
+            console.print(f"[bold]Title:[/bold] {artifact.title}")
+            console.print(f"[bold]Type:[/bold] {get_artifact_type_display(artifact.artifact_type)}")
+            console.print(f"[bold]Status:[/bold] {'completed' if artifact.is_completed else 'processing' if artifact.is_processing else str(artifact.status)}")
+            if artifact.created_at:
+                console.print(f"[bold]Created:[/bold] {artifact.created_at.strftime('%Y-%m-%d %H:%M')}")
         else:
             console.print("[yellow]Artifact not found[/yellow]")
 
@@ -1147,10 +1144,13 @@ def artifact_rename(ctx, notebook_id, artifact_id, new_title):
 
         async def _rename():
             async with NotebookLMClient(auth) as client:
-                return await client.rename_artifact(notebook_id, artifact_id, new_title)
+                from .services.artifacts import ArtifactService
+                service = ArtifactService(client)
+                return await service.rename(notebook_id, artifact_id, new_title)
 
-        run_async(_rename())
-        console.print(f"[green]Renamed:[/green] {artifact_id} -> {new_title}")
+        artifact = run_async(_rename())
+        console.print(f"[green]Renamed artifact:[/green] {artifact.id}")
+        console.print(f"[bold]New title:[/bold] {artifact.title}")
 
     except Exception as e:
         handle_error(e)
@@ -1172,10 +1172,13 @@ def artifact_delete(ctx, notebook_id, artifact_id, yes):
 
         async def _delete():
             async with NotebookLMClient(auth) as client:
-                return await client.delete_studio_content(notebook_id, artifact_id)
+                from .services.artifacts import ArtifactService
+                service = ArtifactService(client)
+                return await service.delete(notebook_id, artifact_id)
 
-        run_async(_delete())
-        console.print(f"[green]Deleted artifact:[/green] {artifact_id}")
+        success = run_async(_delete())
+        if success:
+            console.print(f"[green]Deleted artifact:[/green] {artifact_id}")
 
     except Exception as e:
         handle_error(e)
