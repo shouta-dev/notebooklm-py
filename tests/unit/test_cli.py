@@ -3,8 +3,17 @@
 import pytest
 from click.testing import CliRunner
 from unittest.mock import AsyncMock, patch, MagicMock
+from datetime import datetime
+from pathlib import Path
 
-from notebooklm.notebooklm_cli import cli, main
+from notebooklm.notebooklm_cli import (
+    cli,
+    main,
+    get_artifact_type_display,
+    detect_source_type,
+    ARTIFACT_TYPE_DISPLAY,
+    ARTIFACT_TYPE_MAP,
+)
 
 
 @pytest.fixture
@@ -23,6 +32,140 @@ def mock_auth():
             "SAPISID": "test",
         }
         yield mock
+
+
+@pytest.fixture
+def mock_client():
+    """Create a fully mocked NotebookLMClient."""
+    with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_cls:
+        client = MagicMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        mock_cls.return_value = client
+        yield client
+
+
+@pytest.fixture
+def mock_fetch_tokens():
+    with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock:
+        mock.return_value = ("csrf_token", "session_id")
+        yield mock
+
+
+# =============================================================================
+# Helper Function Tests
+# =============================================================================
+
+
+class TestGetArtifactTypeDisplay:
+    def test_audio_type(self):
+        assert get_artifact_type_display(1) == "🎵 Audio Overview"
+
+    def test_report_type(self):
+        assert get_artifact_type_display(2) == "📄 Report"
+
+    def test_video_type(self):
+        assert get_artifact_type_display(3) == "🎥 Video Overview"
+
+    def test_quiz_type_without_variant(self):
+        assert get_artifact_type_display(4) == "📝 Quiz"
+
+    def test_quiz_type_with_variant_2(self):
+        assert get_artifact_type_display(4, variant=2) == "📝 Quiz"
+
+    def test_flashcards_type_with_variant_1(self):
+        assert get_artifact_type_display(4, variant=1) == "🃏 Flashcards"
+
+    def test_mind_map_type(self):
+        assert get_artifact_type_display(5) == "🧠 Mind Map"
+
+    def test_infographic_type(self):
+        assert get_artifact_type_display(7) == "🖼️ Infographic"
+
+    def test_slide_deck_type(self):
+        assert get_artifact_type_display(8) == "🎞️ Slide Deck"
+
+    def test_data_table_type(self):
+        assert get_artifact_type_display(9) == "📋 Data Table"
+
+    def test_unknown_type(self):
+        assert get_artifact_type_display(999) == "Unknown (999)"
+
+    def test_report_subtype_briefing_doc(self):
+        assert get_artifact_type_display(2, report_subtype="briefing_doc") == "📋 Briefing Doc"
+
+    def test_report_subtype_study_guide(self):
+        assert get_artifact_type_display(2, report_subtype="study_guide") == "📚 Study Guide"
+
+    def test_report_subtype_blog_post(self):
+        assert get_artifact_type_display(2, report_subtype="blog_post") == "✍️ Blog Post"
+
+    def test_report_subtype_generic(self):
+        assert get_artifact_type_display(2, report_subtype="report") == "📄 Report"
+
+
+class TestDetectSourceType:
+    def test_youtube_url(self):
+        src = ["id", "Video Title", [None, None, None, None, None, None, None, ["https://youtube.com/watch?v=abc"]]]
+        assert detect_source_type(src) == "🎥 YouTube"
+
+    def test_youtu_be_url(self):
+        src = ["id", "Video Title", [None, None, None, None, None, None, None, ["https://youtu.be/abc"]]]
+        assert detect_source_type(src) == "🎥 YouTube"
+
+    def test_web_url(self):
+        src = ["id", "Web Page", [None, None, None, None, None, None, None, ["https://example.com/article"]]]
+        assert detect_source_type(src) == "🔗 Web URL"
+
+    def test_pdf_file(self):
+        src = ["id", "document.pdf", [None, 12345]]
+        assert detect_source_type(src) == "📄 PDF"
+
+    def test_text_file(self):
+        src = ["id", "notes.txt", [None, 1234]]
+        assert detect_source_type(src) == "📝 Text File"
+
+    def test_markdown_file(self):
+        src = ["id", "readme.md", [None, 1234]]
+        assert detect_source_type(src) == "📝 Text File"
+
+    def test_spreadsheet_csv(self):
+        src = ["id", "data.csv", [None, 1234]]
+        assert detect_source_type(src) == "📊 Spreadsheet"
+
+    def test_spreadsheet_xlsx(self):
+        src = ["id", "data.xlsx", [None, 1234]]
+        assert detect_source_type(src) == "📊 Spreadsheet"
+
+    def test_uploaded_file_with_size(self):
+        src = ["id", "Unknown File", [None, 5000]]
+        assert detect_source_type(src) == "📎 Upload"
+
+    def test_pasted_text(self):
+        src = ["id", "Pasted Text", [None, 0]]
+        assert detect_source_type(src) == "📝 Pasted Text"
+
+    def test_empty_source(self):
+        # Empty source defaults to pasted text behavior
+        src = []
+        assert detect_source_type(src) == "📝 Pasted Text"
+
+
+class TestArtifactTypeMappings:
+    def test_artifact_type_map_video(self):
+        assert ARTIFACT_TYPE_MAP["video"] == 3
+
+    def test_artifact_type_map_slide_deck(self):
+        assert ARTIFACT_TYPE_MAP["slide-deck"] == 8
+
+    def test_artifact_type_map_quiz(self):
+        assert ARTIFACT_TYPE_MAP["quiz"] == 4
+
+    def test_artifact_type_map_flashcard(self):
+        assert ARTIFACT_TYPE_MAP["flashcard"] == 4
+
+    def test_artifact_type_map_mind_map(self):
+        assert ARTIFACT_TYPE_MAP["mind-map"] == 5
 
 
 class TestCLIBasics:
@@ -240,3 +383,701 @@ class TestContextCommands:
     def test_clear_command_exists(self, runner):
         result = runner.invoke(cli, ["clear", "--help"])
         assert result.exit_code == 0
+
+    def test_use_sets_context(self, runner, tmp_path):
+        # Patch CONTEXT_FILE to use tmp_path
+        with patch("notebooklm.notebooklm_cli.CONTEXT_FILE", tmp_path / "context.json"):
+            result = runner.invoke(cli, ["use", "nb_test123"])
+            assert result.exit_code == 0
+            assert "nb_test123" in result.output
+
+    def test_status_shows_no_context(self, runner, tmp_path):
+        # Patch CONTEXT_FILE to use tmp_path (empty)
+        with patch("notebooklm.notebooklm_cli.CONTEXT_FILE", tmp_path / "context.json"):
+            result = runner.invoke(cli, ["status"])
+            assert result.exit_code == 0
+            assert "No notebook selected" in result.output
+
+    def test_status_shows_context_after_use(self, runner, tmp_path):
+        with patch("notebooklm.notebooklm_cli.CONTEXT_FILE", tmp_path / "context.json"):
+            runner.invoke(cli, ["use", "nb_test456"])
+            result = runner.invoke(cli, ["status"])
+            assert result.exit_code == 0
+            assert "nb_test456" in result.output
+
+    def test_clear_removes_context(self, runner, tmp_path):
+        with patch("notebooklm.notebooklm_cli.CONTEXT_FILE", tmp_path / "context.json"):
+            runner.invoke(cli, ["use", "nb_test789"])
+            result = runner.invoke(cli, ["clear"])
+            assert result.exit_code == 0
+            # After clear, status should show no context
+            status_result = runner.invoke(cli, ["status"])
+            assert "No notebook selected" in status_result.output
+
+
+# =============================================================================
+# Command Execution Tests with Mocked Client
+# =============================================================================
+
+
+class TestNotebookCommandsWithMock:
+    def test_notebook_delete(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.delete_notebook = AsyncMock(return_value=None)
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                # notebook delete uses -n option for notebook ID
+                result = runner.invoke(cli, ["notebook", "delete", "-n", "nb_to_delete", "-y"])
+
+            assert result.exit_code == 0
+            mock_client.delete_notebook.assert_called_once_with("nb_to_delete")
+
+    def test_notebook_rename(self, runner, mock_auth):
+        # Mock the NotebookService since rename uses it
+        mock_notebook = MagicMock()
+        mock_notebook.id = "nb_123"
+        mock_notebook.title = "New Title"
+
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_cls.return_value = mock_client
+
+            # Patch where NotebookService is used, not where it's defined
+            with patch("notebooklm.notebooklm_cli.NotebookService") as mock_service_cls:
+                mock_service = MagicMock()
+                mock_service.rename = AsyncMock(return_value=mock_notebook)
+                mock_service_cls.return_value = mock_service
+
+                with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                    mock_fetch.return_value = ("csrf", "session")
+                    # notebook rename: NEW_TITLE is positional, notebook ID via -n
+                    result = runner.invoke(cli, ["notebook", "rename", "New Title", "-n", "nb_123"])
+
+                assert result.exit_code == 0
+                assert "nb_123" in result.output or "New Title" in result.output
+
+
+class TestSourceCommandsWithMock:
+    def test_source_list(self, runner, mock_auth):
+        # Mock the SourceService since source_list uses it
+        mock_source = MagicMock()
+        mock_source.id = "src_1"
+        mock_source.title = "Source One"
+        mock_source.source_type = "url"
+        mock_source.created_at = None
+
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.services.sources.SourceService") as mock_service_cls:
+                mock_service = MagicMock()
+                mock_service.list = AsyncMock(return_value=[mock_source])
+                mock_service_cls.return_value = mock_service
+
+                with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                    mock_fetch.return_value = ("csrf", "session")
+                    result = runner.invoke(cli, ["source", "list", "-n", "nb_123"])
+
+            assert result.exit_code == 0
+            assert "Source One" in result.output or "src_1" in result.output
+
+    def test_source_add_url(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.add_source_url = AsyncMock(
+                return_value=["src_new", "https://example.com", [None, None]]
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(
+                    cli, ["source", "add", "https://example.com", "-n", "nb_123"]
+                )
+
+            assert result.exit_code == 0
+
+    def test_source_add_text(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.add_source_text = AsyncMock(
+                return_value=["src_text", "My Text Source", [None, 100]]
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(
+                    cli,
+                    ["source", "add", "Some text content", "--type", "text", "-n", "nb_123"],
+                )
+
+            assert result.exit_code == 0
+
+    def test_source_delete(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.delete_source = AsyncMock(return_value=None)
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(
+                    cli, ["source", "delete", "src_123", "-n", "nb_123", "-y"]
+                )
+
+            assert result.exit_code == 0
+            mock_client.delete_source.assert_called_once_with("nb_123", "src_123")
+
+
+class TestArtifactCommandsWithMock:
+    def test_artifact_list(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.list_artifacts = AsyncMock(
+                return_value=[
+                    ["art_1", "Quiz One", 4, None, 3, None, None, None, None, ["", [2]]],
+                    ["art_2", "Briefing Doc", 2, None, 3],
+                ]
+            )
+            mock_client.list_mind_maps = AsyncMock(return_value=[])
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["artifact", "list", "-n", "nb_123"])
+
+            assert result.exit_code == 0
+            assert "Quiz One" in result.output or "art_1" in result.output
+
+    def test_artifact_list_includes_mind_maps(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.list_artifacts = AsyncMock(return_value=[])
+            mock_client.list_mind_maps = AsyncMock(
+                return_value=[
+                    ["mm_1", ["mm_1", "{}", None, None, "My Mind Map"]],
+                ]
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["artifact", "list", "-n", "nb_123"])
+
+            assert result.exit_code == 0
+            assert "Mind Map" in result.output
+
+    def test_artifact_rename_rejects_mind_map(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.list_mind_maps = AsyncMock(
+                return_value=[
+                    ["mm_123", ["mm_123", "{}", None, None, "Old Title"]],
+                ]
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(
+                    cli, ["artifact", "rename", "mm_123", "New Title", "-n", "nb_123"]
+                )
+
+            assert result.exit_code != 0
+            assert "Mind maps cannot be renamed" in result.output
+
+    def test_artifact_delete_mind_map_clears(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.list_mind_maps = AsyncMock(
+                return_value=[
+                    ["mm_456", ["mm_456", "{}", None, None, "Mind Map Title"]],
+                ]
+            )
+            mock_client.delete_note = AsyncMock(return_value=None)
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(
+                    cli, ["artifact", "delete", "mm_456", "-n", "nb_123", "-y"]
+                )
+
+            assert result.exit_code == 0
+            assert "Cleared mind map" in result.output
+            mock_client.delete_note.assert_called_once_with("nb_123", "mm_456")
+
+
+class TestNoteCommandsWithMock:
+    def test_note_list(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.list_notes = AsyncMock(
+                return_value=[
+                    ["note_1", ["Note Title", "<p>Content</p>"]],
+                    ["note_2", ["Another Note", "<p>More content</p>"]],
+                ]
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["note", "list", "-n", "nb_123"])
+
+            assert result.exit_code == 0
+
+    def test_note_create(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.create_note = AsyncMock(
+                return_value=["note_new", ["My Note", "<p>Hello</p>"]]
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(
+                    cli,
+                    ["note", "create", "Hello world", "--title", "My Note", "-n", "nb_123"],
+                )
+
+            assert result.exit_code == 0
+
+    def test_note_delete(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.delete_note = AsyncMock(return_value=None)
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(
+                    cli, ["note", "delete", "note_123", "-n", "nb_123", "-y"]
+                )
+
+            assert result.exit_code == 0
+
+
+class TestGenerateCommandsWithMock:
+    def test_generate_audio(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.generate_audio = AsyncMock(
+                return_value={"artifact_id": "audio_123", "status": "processing"}
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["generate", "audio", "-n", "nb_123"])
+
+            assert result.exit_code == 0
+            assert "audio_123" in result.output or "Started" in result.output
+
+    def test_generate_video(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.generate_video = AsyncMock(
+                return_value={"artifact_id": "video_123", "status": "processing"}
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["generate", "video", "-n", "nb_123"])
+
+            assert result.exit_code == 0
+
+    def test_generate_quiz(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.generate_quiz = AsyncMock(
+                return_value={"artifact_id": "quiz_123", "status": "processing"}
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["generate", "quiz", "-n", "nb_123"])
+
+            assert result.exit_code == 0
+
+    def test_generate_flashcards(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.generate_flashcards = AsyncMock(
+                return_value={"artifact_id": "flash_123", "status": "processing"}
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["generate", "flashcards", "-n", "nb_123"])
+
+            assert result.exit_code == 0
+
+    def test_generate_slide_deck(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.generate_slide_deck = AsyncMock(
+                return_value={"artifact_id": "slides_123", "status": "processing"}
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["generate", "slide-deck", "-n", "nb_123"])
+
+            assert result.exit_code == 0
+
+    def test_generate_infographic(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.generate_infographic = AsyncMock(
+                return_value={"artifact_id": "info_123", "status": "processing"}
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["generate", "infographic", "-n", "nb_123"])
+
+            assert result.exit_code == 0
+
+    def test_generate_mind_map(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.generate_mind_map = AsyncMock(
+                return_value={"mind_map": {"name": "Root", "children": []}, "note_ids": ["n1"]}
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["generate", "mind-map", "-n", "nb_123"])
+
+            assert result.exit_code == 0
+
+    def test_generate_report(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.generate_report = AsyncMock(
+                return_value={"artifact_id": "report_123", "status": "processing"}
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["generate", "report", "-n", "nb_123"])
+
+            assert result.exit_code == 0
+
+
+class TestDownloadCommandsWithMock:
+    def test_download_audio(self, runner, mock_auth, tmp_path):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            # list_artifacts returns artifacts in format: [id, title, type, created_at, status, ...]
+            # type 1 = AUDIO, status 3 = completed
+            mock_client.list_artifacts = AsyncMock(
+                return_value=[["audio_123", "My Audio", 1, 1234567890, 3]]
+            )
+
+            output_file = tmp_path / "audio.mp3"
+
+            # Mock download_audio to write file and return path (like real function)
+            async def mock_download_audio(notebook_id, output_path, artifact_id=None):
+                Path(output_path).write_bytes(b"fake audio content")
+                return output_path
+
+            mock_client.download_audio = mock_download_audio
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(
+                    cli, ["download", "audio", str(output_file), "-n", "nb_123"]
+                )
+
+            assert result.exit_code == 0
+            assert output_file.exists()
+
+    def test_download_video(self, runner, mock_auth, tmp_path):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            # type 3 = VIDEO, status 3 = completed
+            mock_client.list_artifacts = AsyncMock(
+                return_value=[["vid_1", "My Video", 3, 1234567890, 3]]
+            )
+
+            output_file = tmp_path / "video.mp4"
+
+            # Mock download_video to write file and return path
+            async def mock_download_video(notebook_id, output_path, artifact_id=None):
+                Path(output_path).write_bytes(b"fake video content")
+                return output_path
+
+            mock_client.download_video = mock_download_video
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(
+                    cli, ["download", "video", str(output_file), "-n", "nb_123"]
+                )
+
+            assert result.exit_code == 0
+            assert output_file.exists()
+
+
+class TestDownloadCommandsAdvanced:
+    """Tests for download command advanced features."""
+
+    def test_download_audio_dry_run(self, runner, mock_auth, tmp_path):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.list_artifacts = AsyncMock(
+                return_value=[["audio_123", "My Audio", 1, 1234567890, 3]]
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(
+                    cli, ["download", "audio", "--dry-run", "-n", "nb_123"]
+                )
+
+            assert result.exit_code == 0
+            assert "DRY RUN" in result.output
+
+    def test_download_audio_no_artifacts(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.list_artifacts = AsyncMock(return_value=[])
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["download", "audio", "-n", "nb_123"])
+
+            # Should report no artifacts found
+            assert "No completed audio artifacts found" in result.output or result.exit_code != 0
+
+    def test_download_infographic(self, runner, mock_auth, tmp_path):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            # type 7 = INFOGRAPHIC, status 3 = completed
+            mock_client.list_artifacts = AsyncMock(
+                return_value=[["info_1", "My Infographic", 7, 1234567890, 3]]
+            )
+
+            output_file = tmp_path / "infographic.png"
+
+            async def mock_download_infographic(notebook_id, output_path, artifact_id=None):
+                Path(output_path).write_bytes(b"fake image content")
+                return output_path
+
+            mock_client.download_infographic = mock_download_infographic
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(
+                    cli, ["download", "infographic", str(output_file), "-n", "nb_123"]
+                )
+
+            assert result.exit_code == 0
+            assert output_file.exists()
+
+    def test_download_slide_deck(self, runner, mock_auth, tmp_path):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            # type 8 = SLIDE_DECK, status 3 = completed
+            mock_client.list_artifacts = AsyncMock(
+                return_value=[["slide_1", "My Slides", 8, 1234567890, 3]]
+            )
+
+            output_dir = tmp_path / "slides"
+
+            async def mock_download_slide_deck(notebook_id, output_path, artifact_id=None):
+                # Slide deck downloads create a directory with files
+                Path(output_path).mkdir(parents=True, exist_ok=True)
+                (Path(output_path) / "slide_1.png").write_bytes(b"fake slide")
+                return output_path
+
+            mock_client.download_slide_deck = mock_download_slide_deck
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(
+                    cli, ["download", "slide-deck", str(output_dir), "-n", "nb_123"]
+                )
+
+            assert result.exit_code == 0
+
+
+class TestNotebookListWithMock:
+    """Tests for notebook list command."""
+
+    def test_notebook_list_empty(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.list_notebooks = AsyncMock(return_value=[])
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["list"])
+
+            assert result.exit_code == 0
+            # With no notebooks, the table will be empty (no data rows)
+            assert "Notebooks" in result.output
+
+    def test_notebook_list_with_notebooks(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            # Notebooks returned as: [title, ..., id, ...] based on from_api_response
+            # data[0] = title, data[2] = id
+            mock_client.list_notebooks = AsyncMock(
+                return_value=[
+                    ["First Notebook", None, "nb_1", None, None, [False, False, None, None, None, [1234567890]]],
+                    ["Second Notebook", None, "nb_2", None, None, [False, False, None, None, None, [1234567890]]],
+                ]
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["list"])
+
+            assert result.exit_code == 0
+            assert "First Notebook" in result.output
+            assert "Second Notebook" in result.output
+
+    def test_notebook_create(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            # create returns: [title, ..., id, ...]
+            mock_client.create_notebook = AsyncMock(
+                return_value=["Test Notebook", None, "new_nb_id", None, None, []]
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["notebook", "create", "Test Notebook"])
+
+            assert result.exit_code == 0
+
+
+class TestQueryCommand:
+    """Tests for query/ask commands."""
+
+    def test_notebook_ask(self, runner, mock_auth):
+        with patch("notebooklm.notebooklm_cli.NotebookLMClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+
+            # Mock ask method which returns a dict
+            mock_client.ask = AsyncMock(
+                return_value={
+                    "answer": "This is a response",
+                    "conversation_id": "conv_123",
+                    "is_follow_up": False,
+                }
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(
+                    cli, ["notebook", "ask", "-n", "nb_123", "What is this?"]
+                )
+
+            assert result.exit_code == 0
+            assert "This is a response" in result.output
+
+
+class TestErrorHandling:
+    def test_no_auth_error(self, runner):
+        with patch("notebooklm.notebooklm_cli.load_auth_from_storage") as mock:
+            mock.return_value = None
+            result = runner.invoke(cli, ["list"])
+            # Should fail when no auth
+            assert result.exit_code != 0
+
+    def test_missing_notebook_context(self, runner, mock_auth):
+        with runner.isolated_filesystem():
+            # Try to run a command that requires notebook context without setting it
+            with patch("notebooklm.notebooklm_cli.fetch_tokens") as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+                result = runner.invoke(cli, ["source", "list"])
+            # Should fail because no notebook is set
+            assert result.exit_code != 0 or "notebook" in result.output.lower()

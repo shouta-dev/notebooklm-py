@@ -264,9 +264,3 @@ class TestStudyGuideGeneration:
     async def test_generate_study_guide(self, client, test_notebook_id):
         result = await client.generate_study_guide(test_notebook_id)
         assert result is not None or result is None
-
-    @pytest.mark.asyncio
-    @pytest.mark.slow
-    async def test_generate_faq(self, client, test_notebook_id):
-        result = await client.generate_faq(test_notebook_id)
-        assert result is not None or result is None
