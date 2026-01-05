@@ -1,0 +1,71 @@
+[project]
+name = "notebooklm-client"
+version = "0.1.0"
+description = "Unofficial Python client for Google NotebookLM API"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Teng Lin", email = "teng.lin@gmail.com"}
+]
+keywords = ["notebooklm", "google", "ai", "automation", "rpc", "client", "api"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "httpx>=0.27.0",
+    "click>=8.0.0",
+    "rich>=13.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/teng-lin/notion-notebooklm"
+Repository = "https://github.com/teng-lin/notion-notebooklm"
+Documentation = "https://github.com/teng-lin/notion-notebooklm#readme"
+Issues = "https://github.com/teng-lin/notion-notebooklm/issues"
+
+[project.optional-dependencies]
+browser = ["playwright>=1.40.0"]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-httpx>=0.30.0",
+    "pytest-cov>=4.0.0",
+]
+all = ["notebooklm[browser,dev]"]
+
+[project.scripts]
+notebooklm = "notebooklm.notebooklm_cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/notebooklm"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "--ignore=tests/e2e"
+markers = [
+    "e2e: end-to-end tests requiring authentication",
+    "slow: slow tests (audio/video generation)",
+]
+
+[tool.coverage.run]
+source = ["src/notebooklm"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90

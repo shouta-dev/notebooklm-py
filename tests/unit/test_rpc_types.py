@@ -1,0 +1,90 @@
+"""Unit tests for RPC types and constants."""
+
+import pytest
+from notebooklm.rpc.types import (
+    RPCMethod,
+    StudioContentType,
+    BATCHEXECUTE_URL,
+    QUERY_URL,
+)
+
+
+class TestRPCConstants:
+    def test_batchexecute_url(self):
+        """Test batchexecute URL is correct."""
+        assert (
+            BATCHEXECUTE_URL
+            == "https://notebooklm.google.com/_/LabsTailwindUi/data/batchexecute"
+        )
+
+    def test_query_url(self):
+        """Test query URL for streaming chat."""
+        assert "GenerateFreeFormStreamed" in QUERY_URL
+
+
+class TestRPCMethod:
+    def test_list_notebooks(self):
+        """Test LIST_NOTEBOOKS RPC ID."""
+        assert RPCMethod.LIST_NOTEBOOKS == "wXbhsf"
+
+    def test_create_notebook(self):
+        """Test CREATE_NOTEBOOK RPC ID."""
+        assert RPCMethod.CREATE_NOTEBOOK == "CCqFvf"
+
+    def test_get_notebook(self):
+        """Test GET_NOTEBOOK RPC ID."""
+        assert RPCMethod.GET_NOTEBOOK == "rLM1Ne"
+
+    def test_delete_notebook(self):
+        """Test DELETE_NOTEBOOK RPC ID."""
+        assert RPCMethod.DELETE_NOTEBOOK == "WWINqb"
+
+    def test_add_source(self):
+        """Test ADD_SOURCE RPC ID."""
+        assert RPCMethod.ADD_SOURCE == "izAoDd"
+
+    def test_summarize(self):
+        """Test SUMMARIZE RPC ID."""
+        assert RPCMethod.SUMMARIZE == "VfAZjd"
+
+    def test_create_audio(self):
+        """Test CREATE_AUDIO RPC ID."""
+        assert RPCMethod.CREATE_AUDIO == "AHyHrd"
+
+    def test_create_video(self):
+        """Test CREATE_VIDEO RPC ID."""
+        assert RPCMethod.CREATE_VIDEO == "R7cb6c"
+
+    def test_poll_studio(self):
+        """Test POLL_STUDIO RPC ID."""
+        assert RPCMethod.POLL_STUDIO == "gArtLc"
+
+    def test_create_artifact(self):
+        """Test CREATE_ARTIFACT RPC ID."""
+        assert RPCMethod.CREATE_ARTIFACT == "xpWGLf"
+
+    def test_rpc_method_is_string(self):
+        """Test RPCMethod values are strings (for JSON serialization)."""
+        assert isinstance(RPCMethod.LIST_NOTEBOOKS.value, str)
+
+
+class TestStudioContentType:
+    def test_audio_type(self):
+        """Test AUDIO content type code."""
+        assert StudioContentType.AUDIO == 1
+
+    def test_video_type(self):
+        """Test VIDEO content type code."""
+        assert StudioContentType.VIDEO == 3
+
+    def test_slides_type(self):
+        """Test SLIDES content type code."""
+        assert StudioContentType.SLIDES == 8
+
+    def test_report_type(self):
+        """Test REPORT content type code."""
+        assert StudioContentType.REPORT == 6
+
+    def test_studio_type_is_int(self):
+        """Test StudioContentType values are integers."""
+        assert isinstance(StudioContentType.AUDIO.value, int)
