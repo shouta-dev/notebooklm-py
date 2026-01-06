@@ -225,7 +225,9 @@ class TestArtifactPolling:
         assert status is not None or status is None
 
     @pytest.mark.asyncio
+    @pytest.mark.golden
     async def test_list_artifacts(self, client, test_notebook_id):
+        """Read-only test - lists existing artifacts."""
         artifacts = await client.artifacts.list(test_notebook_id)
         assert isinstance(artifacts, list)
         assert all(isinstance(art, Artifact) for art in artifacts)
@@ -235,8 +237,8 @@ class TestArtifactPolling:
 @pytest.mark.e2e
 class TestMindMapGeneration:
     @pytest.mark.asyncio
-    @pytest.mark.slow
     async def test_generate_mind_map(self, client, test_notebook_id):
+        """Mind map generation is fast (~5-10s), not slow."""
         result = await client.artifacts.generate_mind_map(test_notebook_id)
         assert result is not None
         assert "mind_map" in result
@@ -262,7 +264,9 @@ class TestStudyGuideGeneration:
 @pytest.mark.e2e
 class TestReportSuggestions:
     @pytest.mark.asyncio
+    @pytest.mark.golden
     async def test_suggest_reports(self, client, test_notebook_id):
+        """Read-only test - gets suggestions without generating."""
         suggestions = await client.artifacts.suggest_reports(test_notebook_id)
 
         assert isinstance(suggestions, list)

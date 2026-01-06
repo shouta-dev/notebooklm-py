@@ -115,3 +115,72 @@ async def cleanup_artifacts(created_artifacts, test_notebook_id, auth_tokens):
                     await client.artifacts.delete(test_notebook_id, art_id)
                 except Exception:
                     pass
+
+
+# =============================================================================
+# Golden Notebook Fixtures (for read-only and mutation tests)
+# =============================================================================
+
+
+@pytest.fixture(scope="session")
+def golden_notebook_id():
+    """Get golden notebook ID from env var.
+
+    The golden notebook should be pre-seeded with:
+    - Sources: Web URL, YouTube video, pasted text
+    - Artifacts: Audio, Video, Quiz, Flashcards, Slide Deck, Mind Map
+
+    Set NOTEBOOKLM_GOLDEN_NOTEBOOK_ID env var before running tests.
+    """
+    nb_id = os.environ.get("NOTEBOOKLM_GOLDEN_NOTEBOOK_ID")
+    if not nb_id:
+        pytest.skip("Golden notebook not configured (set NOTEBOOKLM_GOLDEN_NOTEBOOK_ID)")
+    return nb_id
+
+
+@pytest.fixture(scope="session")
+async def golden_client(auth_tokens) -> AsyncGenerator[NotebookLMClient, None]:
+    """Session-scoped client for golden notebook tests.
+
+    Use this for read-only tests that don't modify state.
+    """
+    async with NotebookLMClient(auth_tokens) as c:
+        yield c
+
+
+@pytest.fixture
+async def temp_notebook(client, created_notebooks, cleanup_notebooks):
+    """Create a temporary notebook that auto-deletes after test.
+
+    Use for CRUD tests that need isolated state.
+    """
+    from uuid import uuid4
+    notebook = await client.notebooks.create(f"Test-{uuid4().hex[:8]}")
+    created_notebooks.append(notebook.id)
+    return notebook
+
+
+@pytest.fixture(scope="session")
+async def generation_notebook(auth_tokens) -> AsyncGenerator:
+    """Session-scoped notebook for slow generation tests.
+
+    Created once per test session with a source added.
+    Cleaned up at session end.
+    """
+    from uuid import uuid4
+
+    async with NotebookLMClient(auth_tokens) as client:
+        notebook = await client.notebooks.create(f"GenTest-{uuid4().hex[:8]}")
+        # Add a source so generation works
+        await client.sources.add_text(
+            notebook.id,
+            "This is test content for artifact generation. "
+            "It contains enough text to generate various artifacts like "
+            "audio overviews, quizzes, and summaries."
+        )
+        yield notebook
+        # Cleanup
+        try:
+            await client.notebooks.delete(notebook.id)
+        except Exception:
+            pass

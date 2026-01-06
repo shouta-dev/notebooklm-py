@@ -9,8 +9,9 @@ from notebooklm import Artifact
 @pytest.mark.e2e
 class TestDownloadAudio:
     @pytest.mark.asyncio
-    @pytest.mark.slow
+    @pytest.mark.golden
     async def test_download_audio(self, client, test_notebook_id):
+        """Downloads existing audio artifact - read-only."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = os.path.join(tmpdir, "audio.mp4")
             try:
@@ -28,8 +29,9 @@ class TestDownloadAudio:
 @pytest.mark.e2e
 class TestDownloadVideo:
     @pytest.mark.asyncio
-    @pytest.mark.slow
+    @pytest.mark.golden
     async def test_download_video(self, client, test_notebook_id):
+        """Downloads existing video artifact - read-only."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = os.path.join(tmpdir, "video.mp4")
             try:
@@ -47,8 +49,9 @@ class TestDownloadVideo:
 @pytest.mark.e2e
 class TestDownloadInfographic:
     @pytest.mark.asyncio
-    @pytest.mark.slow
+    @pytest.mark.golden
     async def test_download_infographic(self, client, test_notebook_id):
+        """Downloads existing infographic - read-only."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = os.path.join(tmpdir, "infographic.png")
             try:
@@ -68,8 +71,9 @@ class TestDownloadInfographic:
 @pytest.mark.e2e
 class TestDownloadSlideDeck:
     @pytest.mark.asyncio
-    @pytest.mark.slow
+    @pytest.mark.golden
     async def test_download_slide_deck(self, client, test_notebook_id):
+        """Downloads existing slide deck - read-only."""
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
                 result = await client.artifacts.download_slide_deck(test_notebook_id, tmpdir)
@@ -88,7 +92,9 @@ class TestDownloadSlideDeck:
 @pytest.mark.e2e
 class TestExportArtifact:
     @pytest.mark.asyncio
+    @pytest.mark.golden
     async def test_export_artifact(self, client, test_notebook_id):
+        """Exports existing artifact - read-only."""
         artifacts = await client.artifacts.list(test_notebook_id)
         if not artifacts or len(artifacts) == 0:
             pytest.skip("No artifacts available to export")

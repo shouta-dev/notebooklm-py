@@ -183,11 +183,15 @@ class TestVideoGeneration:
 @pytest.mark.e2e
 class TestAudioOperations:
     @pytest.mark.asyncio
+    @pytest.mark.golden
     async def test_get_audio_overview(self, client, test_notebook_id):
+        """Read-only test - gets existing audio overview."""
         result = await client.artifacts.get_audio_overview(test_notebook_id)
         assert result is None or isinstance(result, list)
 
     @pytest.mark.asyncio
+    @pytest.mark.golden
     async def test_share_audio(self, client, test_notebook_id):
+        """Read-only test - checks share status."""
         result = await client.artifacts.share_audio(test_notebook_id, public=False)
         assert result is None or result is not None
