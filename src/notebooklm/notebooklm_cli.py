@@ -383,40 +383,31 @@ def list_notebooks_shortcut(ctx, json_output, client_auth):
 @cli.command("create")
 @click.argument("title")
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
-@click.pass_context
-def create_notebook_shortcut(ctx, title, json_output):
+@with_client
+def create_notebook_shortcut(ctx, title, json_output, client_auth):
     """Create a new notebook (shortcut for 'notebook create')."""
-    try:
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            notebook = await client.notebooks.create(title)
 
-        async def _create():
-            async with NotebookLMClient(auth) as client:
-                return await client.notebooks.create(title)
-
-        notebook = run_async(_create())
-
-        if json_output:
-            data = {
-                "notebook": {
-                    "id": notebook.id,
-                    "title": notebook.title,
-                    "created_at": notebook.created_at.isoformat()
-                    if notebook.created_at
-                    else None,
+            if json_output:
+                data = {
+                    "notebook": {
+                        "id": notebook.id,
+                        "title": notebook.title,
+                        "created_at": notebook.created_at.isoformat()
+                        if notebook.created_at
+                        else None,
+                    }
                 }
-            }
-            json_output_response(data)
-            return
+                json_output_response(data)
+                return
 
-        console.print(
-            f"[green]Created notebook:[/green] {notebook.id} - {notebook.title}"
-        )
+            console.print(
+                f"[green]Created notebook:[/green] {notebook.id} - {notebook.title}"
+            )
 
-    except Exception as e:
-        if json_output:
-            json_error_response("ERROR", str(e))
-        handle_error(e)
+    return _run()
 
 
 @cli.command("ask")
@@ -434,8 +425,8 @@ def create_notebook_shortcut(ctx, title, json_output):
 @click.option(
     "--new", "new_conversation", is_flag=True, help="Start a new conversation"
 )
-@click.pass_context
-def ask_shortcut(ctx, question, notebook_id, conversation_id, new_conversation):
+@with_client
+def ask_shortcut(ctx, question, notebook_id, conversation_id, new_conversation, client_auth):
     """Ask a notebook a question (shortcut for 'notebook ask').
 
     By default, continues the last conversation. Use --new to start fresh.
@@ -446,69 +437,59 @@ def ask_shortcut(ctx, question, notebook_id, conversation_id, new_conversation):
       notebooklm ask --new "start fresh question"   # Force new conversation
       notebooklm ask -c <id> "continue this one"    # Continue specific conversation
     """
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        # Determine conversation_id to use
-        effective_conv_id = None
-        if new_conversation:
-            # Force new conversation
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            # Determine conversation_id to use
             effective_conv_id = None
-            console.print("[dim]Starting new conversation...[/dim]")
-        elif conversation_id:
-            # User specified a conversation ID
-            effective_conv_id = conversation_id
-        else:
-            # Try to auto-continue: check context first, then history
-            effective_conv_id = get_current_conversation()
-            if not effective_conv_id:
-                # Query history to get the last conversation
-                async def _get_history():
-                    async with NotebookLMClient(auth) as client:
-                        return await client.chat.get_history(nb_id, limit=1)
+            if new_conversation:
+                # Force new conversation
+                effective_conv_id = None
+                console.print("[dim]Starting new conversation...[/dim]")
+            elif conversation_id:
+                # User specified a conversation ID
+                effective_conv_id = conversation_id
+            else:
+                # Try to auto-continue: check context first, then history
+                effective_conv_id = get_current_conversation()
+                if not effective_conv_id:
+                    # Query history to get the last conversation
+                    try:
+                        history = await client.chat.get_history(nb_id, limit=1)
+                        # Parse: [[['conv_id'], ...]]
+                        if history and history[0]:
+                            last_conv = history[0][-1]  # Get last conversation
+                            effective_conv_id = (
+                                last_conv[0]
+                                if isinstance(last_conv, list)
+                                else str(last_conv)
+                            )
+                            console.print(
+                                f"[dim]Continuing conversation {effective_conv_id[:8]}...[/dim]"
+                            )
+                    except Exception:
+                        # History fetch failed, start new conversation
+                        pass
 
-                try:
-                    history = run_async(_get_history())
-                    # Parse: [[['conv_id'], ...]]
-                    if history and history[0]:
-                        last_conv = history[0][-1]  # Get last conversation
-                        effective_conv_id = (
-                            last_conv[0]
-                            if isinstance(last_conv, list)
-                            else str(last_conv)
-                        )
-                        console.print(
-                            f"[dim]Continuing conversation {effective_conv_id[:8]}...[/dim]"
-                        )
-                except Exception:
-                    # History fetch failed, start new conversation
-                    pass
-
-        async def _ask():
-            async with NotebookLMClient(auth) as client:
-                return await client.chat.ask(
-                    nb_id, question, conversation_id=effective_conv_id
-                )
-
-        result = run_async(_ask())
-
-        # Save conversation_id to context for future asks
-        if result.get("conversation_id"):
-            set_current_conversation(result["conversation_id"])
-
-        console.print(f"[bold cyan]Answer:[/bold cyan]")
-        console.print(result["answer"])
-        if result.get("is_follow_up"):
-            console.print(
-                f"\n[dim]Conversation: {result['conversation_id']} (turn {result.get('turn_number', '?')})[/dim]"
+            result = await client.chat.ask(
+                nb_id, question, conversation_id=effective_conv_id
             )
-        else:
-            console.print(f"\n[dim]New conversation: {result['conversation_id']}[/dim]")
 
-    except Exception as e:
-        handle_error(e)
+            # Save conversation_id to context for future asks
+            if result.get("conversation_id"):
+                set_current_conversation(result["conversation_id"])
+
+            console.print(f"[bold cyan]Answer:[/bold cyan]")
+            console.print(result["answer"])
+            if result.get("is_follow_up"):
+                console.print(
+                    f"\n[dim]Conversation: {result['conversation_id']} (turn {result.get('turn_number', '?')})[/dim]"
+                )
+            else:
+                console.print(f"\n[dim]New conversation: {result['conversation_id']}[/dim]")
+
+    return _run()
 
 
 @cli.command("history")
@@ -521,8 +502,8 @@ def ask_shortcut(ctx, question, notebook_id, conversation_id, new_conversation):
 )
 @click.option("--limit", "-l", default=20, help="Number of messages")
 @click.option("--clear", is_flag=True, help="Clear local conversation cache")
-@click.pass_context
-def history_shortcut(ctx, notebook_id, limit, clear):
+@with_client
+def history_shortcut(ctx, notebook_id, limit, clear, client_auth):
     """View conversation history or clear local cache (shortcut for 'notebook history').
 
     \b
@@ -531,65 +512,47 @@ def history_shortcut(ctx, notebook_id, limit, clear):
       notebooklm history --limit 5        # Show last 5 messages
       notebooklm history --clear          # Clear local cache
     """
-    try:
-
-        if clear:
-            # Clear local cache (no notebook required)
-            cookies, csrf, session_id = get_client(ctx)
-            auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
-
-            async def _clear():
-                async with NotebookLMClient(auth) as client:
-                    return client.chat.clear_cache()
-
-            result = run_async(_clear())
-            if result:
-                console.print("[green]Local conversation cache cleared[/green]")
-            else:
-                console.print("[yellow]No cache to clear[/yellow]")
-            return
-
-        # Get history from server
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
-
-        async def _get():
-            async with NotebookLMClient(auth) as client:
-                return await client.chat.get_history(nb_id, limit=limit)
-
-        history = run_async(_get())
-        if history:
-            console.print(f"[bold cyan]Conversation History:[/bold cyan]")
-            # TODO: The API only returns conversation IDs, not full Q&A content.
-            # To show actual messages, discover the RPC method used by NotebookLM
-            # web UI when displaying chat history.
-            # Parse the nested response structure: [[['conv_id'], ...]]
-            try:
-                conversations = history[0] if history else []
-                if conversations:
-                    table = Table()
-                    table.add_column("#", style="dim")
-                    table.add_column("Conversation ID", style="cyan")
-                    for i, conv in enumerate(conversations, 1):
-                        conv_id = (
-                            conv[0] if isinstance(conv, list) and conv else str(conv)
-                        )
-                        table.add_row(str(i), conv_id)
-                    console.print(table)
-                    console.print(
-                        f"\n[dim]Note: Only conversation IDs available. Use 'notebooklm ask -c <id>' to continue.[/dim]"
-                    )
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            if clear:
+                # Clear local cache (no notebook required)
+                result = client.chat.clear_cache()
+                if result:
+                    console.print("[green]Local conversation cache cleared[/green]")
                 else:
-                    console.print("[yellow]No conversations found[/yellow]")
-            except (IndexError, TypeError):
-                # Fallback: show raw data if parsing fails
-                console.print(history)
-        else:
-            console.print("[yellow]No conversation history[/yellow]")
+                    console.print("[yellow]No cache to clear[/yellow]")
+                return
 
-    except Exception as e:
-        handle_error(e)
+            # Get history from server
+            nb_id = require_notebook(notebook_id)
+            history = await client.chat.get_history(nb_id, limit=limit)
+
+            if history:
+                console.print(f"[bold cyan]Conversation History:[/bold cyan]")
+                try:
+                    conversations = history[0] if history else []
+                    if conversations:
+                        table = Table()
+                        table.add_column("#", style="dim")
+                        table.add_column("Conversation ID", style="cyan")
+                        for i, conv in enumerate(conversations, 1):
+                            conv_id = (
+                                conv[0] if isinstance(conv, list) and conv else str(conv)
+                            )
+                            table.add_row(str(i), conv_id)
+                        console.print(table)
+                        console.print(
+                            f"\n[dim]Note: Only conversation IDs available. Use 'notebooklm ask -c <id>' to continue.[/dim]"
+                        )
+                    else:
+                        console.print("[yellow]No conversations found[/yellow]")
+                except (IndexError, TypeError):
+                    # Fallback: show raw data if parsing fails
+                    console.print(history)
+            else:
+                console.print("[yellow]No conversation history[/yellow]")
+
+    return _run()
 
 
 # =============================================================================
@@ -642,33 +605,26 @@ def notebook_create(ctx, title, json_output):
     help="Notebook ID (uses current if not set)",
 )
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
-@click.pass_context
-def notebook_delete(ctx, notebook_id, yes):
+@with_client
+def notebook_delete(ctx, notebook_id, yes, client_auth):
     """Delete a notebook."""
     notebook_id = require_notebook(notebook_id)
     if not yes and not click.confirm(f"Delete notebook {notebook_id}?"):
         return
 
-    try:
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            success = await client.notebooks.delete(notebook_id)
+            if success:
+                console.print(f"[green]Deleted notebook:[/green] {notebook_id}")
+                # Clear context if we deleted the current notebook
+                if get_current_notebook() == notebook_id:
+                    clear_context()
+                    console.print("[dim]Cleared current notebook context[/dim]")
+            else:
+                console.print("[yellow]Delete may have failed[/yellow]")
 
-        async def _delete():
-            async with NotebookLMClient(auth) as client:
-                return await client.notebooks.delete(notebook_id)
-
-        success = run_async(_delete())
-        if success:
-            console.print(f"[green]Deleted notebook:[/green] {notebook_id}")
-            # Clear context if we deleted the current notebook
-            if get_current_notebook() == notebook_id:
-                clear_context()
-                console.print("[dim]Cleared current notebook context[/dim]")
-        else:
-            console.print("[yellow]Delete may have failed[/yellow]")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @notebook.command("rename")
@@ -680,24 +636,18 @@ def notebook_delete(ctx, notebook_id, yes):
     default=None,
     help="Notebook ID (uses current if not set)",
 )
-@click.pass_context
-def notebook_rename(ctx, new_title, notebook_id):
+@with_client
+def notebook_rename(ctx, new_title, notebook_id, client_auth):
     """Rename a notebook."""
     notebook_id = require_notebook(notebook_id)
-    try:
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
 
-        async def _rename():
-            async with NotebookLMClient(auth) as client:
-                await client.notebooks.rename(notebook_id, new_title)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            await client.notebooks.rename(notebook_id, new_title)
+            console.print(f"[green]Renamed notebook:[/green] {notebook_id}")
+            console.print(f"[bold]New title:[/bold] {new_title}")
 
-        run_async(_rename())
-        console.print(f"[green]Renamed notebook:[/green] {notebook_id}")
-        console.print(f"[bold]New title:[/bold] {new_title}")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @notebook.command("share")
@@ -708,27 +658,21 @@ def notebook_rename(ctx, new_title, notebook_id):
     default=None,
     help="Notebook ID (uses current if not set)",
 )
-@click.pass_context
-def notebook_share(ctx, notebook_id):
+@with_client
+def notebook_share(ctx, notebook_id, client_auth):
     """Configure notebook sharing."""
     notebook_id = require_notebook(notebook_id)
-    try:
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
 
-        async def _share():
-            async with NotebookLMClient(auth) as client:
-                return await client.notebooks.share(notebook_id)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            result = await client.notebooks.share(notebook_id)
+            if result:
+                console.print(f"[green]Sharing configured[/green]")
+                console.print(result)
+            else:
+                console.print("[yellow]No sharing info returned[/yellow]")
 
-        result = run_async(_share())
-        if result:
-            console.print(f"[green]Sharing configured[/green]")
-            console.print(result)
-        else:
-            console.print("[yellow]No sharing info returned[/yellow]")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @notebook.command("summary")
@@ -740,8 +684,8 @@ def notebook_share(ctx, notebook_id):
     help="Notebook ID (uses current if not set)",
 )
 @click.option("--topics", is_flag=True, help="Include suggested topics")
-@click.pass_context
-def notebook_summary(ctx, notebook_id, topics):
+@with_client
+def notebook_summary(ctx, notebook_id, topics, client_auth):
     """Get notebook summary with AI-generated insights.
 
     \b
@@ -750,29 +694,22 @@ def notebook_summary(ctx, notebook_id, topics):
       notebooklm notebook summary --topics     # With suggested topics
     """
     notebook_id = require_notebook(notebook_id)
-    try:
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
 
-        async def _get():
-            async with NotebookLMClient(auth) as client:
-                return await client.notebooks.get_description(notebook_id)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            description = await client.notebooks.get_description(notebook_id)
+            if description and description.summary:
+                console.print("[bold cyan]Summary:[/bold cyan]")
+                console.print(description.summary)
 
-        description = run_async(_get())
-        if description and description.summary:
-            console.print("[bold cyan]Summary:[/bold cyan]")
-            console.print(description.summary)
+                if topics and description.suggested_topics:
+                    console.print("\n[bold cyan]Suggested Topics:[/bold cyan]")
+                    for i, topic in enumerate(description.suggested_topics, 1):
+                        console.print(f"  {i}. {topic.question}")
+            else:
+                console.print("[yellow]No summary available[/yellow]")
 
-            if topics and description.suggested_topics:
-                console.print("\n[bold cyan]Suggested Topics:[/bold cyan]")
-                for i, topic in enumerate(description.suggested_topics, 1):
-                    console.print(f"  {i}. {topic.question}")
-
-        else:
-            console.print("[yellow]No summary available[/yellow]")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @notebook.command("analytics")
@@ -783,27 +720,21 @@ def notebook_summary(ctx, notebook_id, topics):
     default=None,
     help="Notebook ID (uses current if not set)",
 )
-@click.pass_context
-def notebook_analytics(ctx, notebook_id):
+@with_client
+def notebook_analytics(ctx, notebook_id, client_auth):
     """Get notebook analytics."""
     notebook_id = require_notebook(notebook_id)
-    try:
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
 
-        async def _get():
-            async with NotebookLMClient(auth) as client:
-                return await client.notebooks.get_analytics(notebook_id)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            analytics = await client.notebooks.get_analytics(notebook_id)
+            if analytics:
+                console.print("[bold cyan]Analytics:[/bold cyan]")
+                console.print(analytics)
+            else:
+                console.print("[yellow]No analytics available[/yellow]")
 
-        analytics = run_async(_get())
-        if analytics:
-            console.print("[bold cyan]Analytics:[/bold cyan]")
-            console.print(analytics)
-        else:
-            console.print("[yellow]No analytics available[/yellow]")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @notebook.command("history")
@@ -880,8 +811,8 @@ def notebook_ask(ctx, question, notebook_id, conversation_id, new_conversation):
     default=None,
     help="Response verbosity",
 )
-@click.pass_context
-def notebook_configure(ctx, notebook_id, chat_mode, persona, response_length):
+@with_client
+def notebook_configure(ctx, notebook_id, chat_mode, persona, response_length, client_auth):
     """Configure chat persona and response settings.
 
     \b
@@ -897,59 +828,54 @@ def notebook_configure(ctx, notebook_id, chat_mode, persona, response_length):
       notebooklm notebook configure --persona "Act as a chemistry tutor"
       notebooklm notebook configure --mode detailed --response-length longer
     """
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _configure():
-            from .rpc import ChatGoal, ChatResponseLength
+    async def _run():
+        from .rpc import ChatGoal, ChatResponseLength
 
-            async with NotebookLMClient(auth) as client:
-                if chat_mode:
-                    mode_map = {
-                        "default": ChatMode.DEFAULT,
-                        "learning-guide": ChatMode.LEARNING_GUIDE,
-                        "concise": ChatMode.CONCISE,
-                        "detailed": ChatMode.DETAILED,
-                    }
-                    await client.chat.set_mode(nb_id, mode_map[chat_mode])
-                    return f"Chat mode set to: {chat_mode}"
+        async with NotebookLMClient(client_auth) as client:
+            if chat_mode:
+                mode_map = {
+                    "default": ChatMode.DEFAULT,
+                    "learning-guide": ChatMode.LEARNING_GUIDE,
+                    "concise": ChatMode.CONCISE,
+                    "detailed": ChatMode.DETAILED,
+                }
+                await client.chat.set_mode(nb_id, mode_map[chat_mode])
+                console.print(f"[green]Chat mode set to: {chat_mode}[/green]")
+                return
 
-                goal = ChatGoal.CUSTOM if persona else None
-                length = None
-                if response_length:
-                    length_map = {
-                        "default": ChatResponseLength.DEFAULT,
-                        "longer": ChatResponseLength.LONGER,
-                        "shorter": ChatResponseLength.SHORTER,
-                    }
-                    length = length_map[response_length]
+            goal = ChatGoal.CUSTOM if persona else None
+            length = None
+            if response_length:
+                length_map = {
+                    "default": ChatResponseLength.DEFAULT,
+                    "longer": ChatResponseLength.LONGER,
+                    "shorter": ChatResponseLength.SHORTER,
+                }
+                length = length_map[response_length]
 
-                await client.chat.configure(
-                    nb_id, goal=goal, response_length=length, custom_prompt=persona
+            await client.chat.configure(
+                nb_id, goal=goal, response_length=length, custom_prompt=persona
+            )
+
+            parts = []
+            if persona:
+                parts.append(
+                    f'persona: "{persona[:50]}..."'
+                    if len(persona) > 50
+                    else f'persona: "{persona}"'
                 )
+            if response_length:
+                parts.append(f"response length: {response_length}")
+            result = (
+                f"Chat configured: {', '.join(parts)}"
+                if parts
+                else "Chat configured (no changes)"
+            )
+            console.print(f"[green]{result}[/green]")
 
-                parts = []
-                if persona:
-                    parts.append(
-                        f'persona: "{persona[:50]}..."'
-                        if len(persona) > 50
-                        else f'persona: "{persona}"'
-                    )
-                if response_length:
-                    parts.append(f"response length: {response_length}")
-                return (
-                    f"Chat configured: {', '.join(parts)}"
-                    if parts
-                    else "Chat configured (no changes)"
-                )
-
-        result = run_async(_configure())
-        console.print(f"[green]{result}[/green]")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @notebook.command("research")
@@ -964,98 +890,80 @@ def notebook_configure(ctx, notebook_id, chat_mode, persona, response_length):
 @click.option("--source", type=click.Choice(["web", "drive"]), default="web")
 @click.option("--mode", type=click.Choice(["fast", "deep"]), default="fast")
 @click.option("--import-all", is_flag=True, help="Import all found sources")
-@click.pass_context
-def notebook_research(ctx, query, notebook_id, source, mode, import_all):
+@with_client
+def notebook_research(ctx, query, notebook_id, source, mode, import_all, client_auth):
     """Start a research session."""
     notebook_id = require_notebook(notebook_id)
-    try:
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
 
-        async def _research():
-            async with NotebookLMClient(auth) as client:
-                console.print(
-                    f"[yellow]Starting {mode} research on {source}...[/yellow]"
-                )
-                result = await client.research.start(notebook_id, query, source, mode)
-                if not result:
-                    return None, None
+    async def _run():
+        import time
 
-                task_id = result["task_id"]
-                console.print(f"[dim]Task ID: {task_id}[/dim]")
+        async with NotebookLMClient(client_auth) as client:
+            console.print(
+                f"[yellow]Starting {mode} research on {source}...[/yellow]"
+            )
+            result = await client.research.start(notebook_id, query, source, mode)
+            if not result:
+                console.print("[red]Research failed to start[/red]")
+                raise SystemExit(1)
 
-                import time
+            task_id = result["task_id"]
+            console.print(f"[dim]Task ID: {task_id}[/dim]")
 
-                for _ in range(60):
-                    status = await client.research.poll(notebook_id)
-                    if status.get("status") == "completed":
-                        return task_id, status
-                    elif status.get("status") == "no_research":
-                        return None, None
-                    time.sleep(5)
+            # Poll for completion
+            status = None
+            for _ in range(60):
+                status = await client.research.poll(notebook_id)
+                if status.get("status") == "completed":
+                    break
+                elif status.get("status") == "no_research":
+                    console.print("[red]Research failed to start[/red]")
+                    raise SystemExit(1)
+                time.sleep(5)
+            else:
+                status = {"status": "timeout"}
 
-                return task_id, {"status": "timeout"}
+            if status.get("status") == "completed":
+                sources = status.get("sources", [])
+                console.print(f"\n[green]Found {len(sources)} sources[/green]")
 
-        task_id, status = run_async(_research())
+                if import_all and sources and task_id:
+                    imported = await client.research.import_sources(
+                        notebook_id, task_id, sources
+                    )
+                    console.print(f"[green]Imported {len(imported)} sources[/green]")
+            else:
+                console.print(f"[yellow]Status: {status.get('status', 'unknown')}[/yellow]")
 
-        if not status:
-            console.print("[red]Research failed to start[/red]")
-            raise SystemExit(1)
-
-        if status.get("status") == "completed":
-            sources = status.get("sources", [])
-            console.print(f"\n[green]Found {len(sources)} sources[/green]")
-
-            if import_all and sources and task_id:
-
-                async def _import():
-                    async with NotebookLMClient(auth) as client:
-                        return await client.research.import_sources(
-                            notebook_id, task_id, sources
-                        )
-
-                imported = run_async(_import())
-                console.print(f"[green]Imported {len(imported)} sources[/green]")
-        else:
-            console.print(f"[yellow]Status: {status.get('status', 'unknown')}[/yellow]")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @notebook.command("featured")
 @click.option("--limit", "-n", default=20, help="Number of notebooks")
-@click.pass_context
-def notebook_featured(ctx, limit):
+@with_client
+def notebook_featured(ctx, limit, client_auth):
     """List featured/public notebooks."""
-    try:
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            projects = await client.notebooks.list_featured(page_size=limit)
 
-        async def _list():
-            async with NotebookLMClient(auth) as client:
-                return await client.notebooks.list_featured(page_size=limit)
+            if not projects:
+                console.print("[yellow]No featured notebooks found[/yellow]")
+                return
 
-        projects = run_async(_list())
+            table = Table(title="Featured Notebooks")
+            table.add_column("ID", style="cyan")
+            table.add_column("Title", style="green")
 
-        if not projects:
-            console.print("[yellow]No featured notebooks found[/yellow]")
-            return
+            for proj in projects:
+                if isinstance(proj, list) and len(proj) > 0:
+                    table.add_row(
+                        str(proj[0] or "-"), str(proj[1] if len(proj) > 1 else "-")
+                    )
 
-        table = Table(title="Featured Notebooks")
-        table.add_column("ID", style="cyan")
-        table.add_column("Title", style="green")
+            console.print(table)
 
-        for proj in projects:
-            if isinstance(proj, list) and len(proj) > 0:
-                table.add_row(
-                    str(proj[0] or "-"), str(proj[1] if len(proj) > 1 else "-")
-                )
-
-        console.print(table)
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 # =============================================================================
@@ -1088,65 +996,56 @@ def source():
     help="Notebook ID (uses current if not set)",
 )
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
-@click.pass_context
-def source_list(ctx, notebook_id, json_output):
+@with_client
+def source_list(ctx, notebook_id, json_output, client_auth):
     """List all sources in a notebook."""
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _list():
-            async with NotebookLMClient(auth) as client:
-                sources = await client.sources.list(nb_id)
-                nb = None
-                if json_output:
-                    nb = await client.notebooks.get(nb_id)
-                return sources, nb
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            sources = await client.sources.list(nb_id)
+            nb = None
+            if json_output:
+                nb = await client.notebooks.get(nb_id)
 
-        sources, nb = run_async(_list())
+            if json_output:
+                data = {
+                    "notebook_id": nb_id,
+                    "notebook_title": nb.title if nb else None,
+                    "sources": [
+                        {
+                            "index": i,
+                            "id": src.id,
+                            "title": src.title,
+                            "type": src.source_type,
+                            "url": src.url,
+                            "created_at": src.created_at.isoformat()
+                            if src.created_at
+                            else None,
+                        }
+                        for i, src in enumerate(sources, 1)
+                    ],
+                    "count": len(sources),
+                }
+                json_output_response(data)
+                return
 
-        if json_output:
-            data = {
-                "notebook_id": nb_id,
-                "notebook_title": nb.title if nb else None,
-                "sources": [
-                    {
-                        "index": i,
-                        "id": src.id,
-                        "title": src.title,
-                        "type": src.source_type,
-                        "url": src.url,
-                        "created_at": src.created_at.isoformat()
-                        if src.created_at
-                        else None,
-                    }
-                    for i, src in enumerate(sources, 1)
-                ],
-                "count": len(sources),
-            }
-            json_output_response(data)
-            return
+            table = Table(title=f"Sources in {nb_id}")
+            table.add_column("ID", style="cyan")
+            table.add_column("Title", style="green")
+            table.add_column("Type")
+            table.add_column("Created", style="dim")
 
-        table = Table(title=f"Sources in {nb_id}")
-        table.add_column("ID", style="cyan")
-        table.add_column("Title", style="green")
-        table.add_column("Type")
-        table.add_column("Created", style="dim")
+            for src in sources:
+                type_display = get_source_type_display(src.source_type)
+                created = (
+                    src.created_at.strftime("%Y-%m-%d %H:%M") if src.created_at else "-"
+                )
+                table.add_row(src.id, src.title or "-", type_display, created)
 
-        for src in sources:
-            type_display = get_source_type_display(src.source_type)
-            created = (
-                src.created_at.strftime("%Y-%m-%d %H:%M") if src.created_at else "-"
-            )
-            table.add_row(src.id, src.title or "-", type_display, created)
+            console.print(table)
 
-        console.print(table)
-
-    except Exception as e:
-        if json_output:
-            json_error_response("ERROR", str(e))
-        handle_error(e)
+    return _run()
 
 
 @source.command("add")
@@ -1168,8 +1067,8 @@ def source_list(ctx, notebook_id, json_output):
 @click.option("--title", help="Title for text sources")
 @click.option("--mime-type", help="MIME type for file sources")
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
-@click.pass_context
-def source_add(ctx, content, notebook_id, source_type, title, mime_type, json_output):
+@with_client
+def source_add(ctx, content, notebook_id, source_type, title, mime_type, json_output, client_auth):
     """Add a source to a notebook.
 
     \b
@@ -1187,76 +1086,67 @@ def source_add(ctx, content, notebook_id, source_type, title, mime_type, json_ou
       source add "My notes here"                  # Inline text
       source add "My notes" --title "Research"   # Text with custom title
     """
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        # Auto-detect source type if not specified
-        detected_type = source_type
-        file_content = None  # For text-based files
-        file_title = title
+    # Auto-detect source type if not specified
+    detected_type = source_type
+    file_content = None  # For text-based files
+    file_title = title
 
-        if detected_type is None:
-            if content.startswith(("http://", "https://")):
-                # Check for YouTube URLs
-                if "youtube.com" in content or "youtu.be" in content:
-                    detected_type = "youtube"
-                else:
-                    detected_type = "url"
-            elif Path(content).exists():
-                file_path = Path(content)
-                suffix = file_path.suffix.lower()
-                # Text-based files: read content and add as text (workaround for broken file upload RPC)
-                if suffix in (".txt", ".md", ".markdown", ".rst", ".text"):
-                    detected_type = "text"
-                    file_content = file_path.read_text()
-                    file_title = title or file_path.name
-                else:
-                    detected_type = "file"
+    if detected_type is None:
+        if content.startswith(("http://", "https://")):
+            # Check for YouTube URLs
+            if "youtube.com" in content or "youtu.be" in content:
+                detected_type = "youtube"
             else:
-                # Not a URL, not a file → treat as inline text content
+                detected_type = "url"
+        elif Path(content).exists():
+            file_path = Path(content)
+            suffix = file_path.suffix.lower()
+            # Text-based files: read content and add as text (workaround for broken file upload RPC)
+            if suffix in (".txt", ".md", ".markdown", ".rst", ".text"):
                 detected_type = "text"
-                file_title = title or "Pasted Text"
-
-        async def _add():
-            async with NotebookLMClient(auth) as client:
-                if detected_type == "url":
-                    return await client.sources.add_url(nb_id, content)
-                elif detected_type == "youtube":
-                    return await client.sources.add_url(nb_id, content)
-                elif detected_type == "text":
-                    # Use file_content if we read from a file, otherwise use content directly
-                    text_content = file_content if file_content is not None else content
-                    text_title = file_title or "Untitled"
-                    return await client.sources.add_text(nb_id, text_title, text_content)
-                elif detected_type == "file":
-                    return await client.sources.add_file(nb_id, content, mime_type)
-
-        if not json_output:
-            with console.status(f"Adding {detected_type} source..."):
-                source = run_async(_add())
+                file_content = file_path.read_text()
+                file_title = title or file_path.name
+            else:
+                detected_type = "file"
         else:
-            source = run_async(_add())
+            # Not a URL, not a file → treat as inline text content
+            detected_type = "text"
+            file_title = title or "Pasted Text"
 
-        if json_output:
-            data = {
-                "source": {
-                    "id": source.id,
-                    "title": source.title,
-                    "type": source.source_type,
-                    "url": source.url,
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            if detected_type == "url":
+                source = await client.sources.add_url(nb_id, content)
+            elif detected_type == "youtube":
+                source = await client.sources.add_url(nb_id, content)
+            elif detected_type == "text":
+                # Use file_content if we read from a file, otherwise use content directly
+                text_content = file_content if file_content is not None else content
+                text_title = file_title or "Untitled"
+                source = await client.sources.add_text(nb_id, text_title, text_content)
+            elif detected_type == "file":
+                source = await client.sources.add_file(nb_id, content, mime_type)
+
+            if json_output:
+                data = {
+                    "source": {
+                        "id": source.id,
+                        "title": source.title,
+                        "type": source.source_type,
+                        "url": source.url,
+                    }
                 }
-            }
-            json_output_response(data)
-            return
+                json_output_response(data)
+                return
 
-        console.print(f"[green]Added source:[/green] {source.id}")
+            console.print(f"[green]Added source:[/green] {source.id}")
 
-    except Exception as e:
-        if json_output:
-            json_error_response("ERROR", str(e))
-        handle_error(e)
+    if not json_output:
+        with console.status(f"Adding {detected_type} source..."):
+            return _run()
+    return _run()
 
 
 @source.command("get")
@@ -1268,36 +1158,30 @@ def source_add(ctx, content, notebook_id, source_type, title, mime_type, json_ou
     default=None,
     help="Notebook ID (uses current if not set)",
 )
-@click.pass_context
-def source_get(ctx, source_id, notebook_id):
+@with_client
+def source_get(ctx, source_id, notebook_id, client_auth):
     """Get source details."""
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _get():
-            async with NotebookLMClient(auth) as client:
-                return await client.sources.get(nb_id, source_id)
-
-        source = run_async(_get())
-        if source:
-            console.print(f"[bold cyan]Source:[/bold cyan] {source.id}")
-            console.print(f"[bold]Title:[/bold] {source.title}")
-            console.print(
-                f"[bold]Type:[/bold] {get_source_type_display(source.source_type)}"
-            )
-            if source.url:
-                console.print(f"[bold]URL:[/bold] {source.url}")
-            if source.created_at:
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            source = await client.sources.get(nb_id, source_id)
+            if source:
+                console.print(f"[bold cyan]Source:[/bold cyan] {source.id}")
+                console.print(f"[bold]Title:[/bold] {source.title}")
                 console.print(
-                    f"[bold]Created:[/bold] {source.created_at.strftime('%Y-%m-%d %H:%M')}"
+                    f"[bold]Type:[/bold] {get_source_type_display(source.source_type)}"
                 )
-        else:
-            console.print("[yellow]Source not found[/yellow]")
+                if source.url:
+                    console.print(f"[bold]URL:[/bold] {source.url}")
+                if source.created_at:
+                    console.print(
+                        f"[bold]Created:[/bold] {source.created_at.strftime('%Y-%m-%d %H:%M')}"
+                    )
+            else:
+                console.print("[yellow]Source not found[/yellow]")
 
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @source.command("delete")
@@ -1310,29 +1194,23 @@ def source_get(ctx, source_id, notebook_id):
     help="Notebook ID (uses current if not set)",
 )
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
-@click.pass_context
-def source_delete(ctx, source_id, notebook_id, yes):
+@with_client
+def source_delete(ctx, source_id, notebook_id, yes, client_auth):
     """Delete a source."""
     if not yes and not click.confirm(f"Delete source {source_id}?"):
         return
 
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _delete():
-            async with NotebookLMClient(auth) as client:
-                return await client.sources.delete(nb_id, source_id)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            success = await client.sources.delete(nb_id, source_id)
+            if success:
+                console.print(f"[green]Deleted source:[/green] {source_id}")
+            else:
+                console.print("[yellow]Delete may have failed[/yellow]")
 
-        success = run_async(_delete())
-        if success:
-            console.print(f"[green]Deleted source:[/green] {source_id}")
-        else:
-            console.print("[yellow]Delete may have failed[/yellow]")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @source.command("rename")
@@ -1345,25 +1223,18 @@ def source_delete(ctx, source_id, notebook_id, yes):
     default=None,
     help="Notebook ID (uses current if not set)",
 )
-@click.pass_context
-def source_rename(ctx, source_id, new_title, notebook_id):
+@with_client
+def source_rename(ctx, source_id, new_title, notebook_id, client_auth):
     """Rename a source."""
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _rename():
-            async with NotebookLMClient(auth) as client:
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            source = await client.sources.rename(nb_id, source_id, new_title)
+            console.print(f"[green]Renamed source:[/green] {source.id}")
+            console.print(f"[bold]New title:[/bold] {source.title}")
 
-                return await client.sources.rename(nb_id, source_id, new_title)
-
-        source = run_async(_rename())
-        console.print(f"[green]Renamed source:[/green] {source.id}")
-        console.print(f"[bold]New title:[/bold] {source.title}")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @source.command("refresh")
@@ -1375,29 +1246,23 @@ def source_rename(ctx, source_id, new_title, notebook_id):
     default=None,
     help="Notebook ID (uses current if not set)",
 )
-@click.pass_context
-def source_refresh(ctx, source_id, notebook_id):
+@with_client
+def source_refresh(ctx, source_id, notebook_id, client_auth):
     """Refresh a URL/Drive source."""
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _refresh():
-            async with NotebookLMClient(auth) as client:
-                return await client.sources.refresh(nb_id, source_id)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            with console.status("Refreshing source..."):
+                source = await client.sources.refresh(nb_id, source_id)
 
-        with console.status(f"Refreshing source..."):
-            source = run_async(_refresh())
+            if source:
+                console.print(f"[green]Source refreshed:[/green] {source.id}")
+                console.print(f"[bold]Title:[/bold] {source.title}")
+            else:
+                console.print("[yellow]Refresh returned no result[/yellow]")
 
-        if source:
-            console.print(f"[green]Source refreshed:[/green] {source.id}")
-            console.print(f"[bold]Title:[/bold] {source.title}")
-        else:
-            console.print("[yellow]Refresh returned no result[/yellow]")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @source.command("add-drive")
@@ -1416,36 +1281,29 @@ def source_refresh(ctx, source_id, notebook_id):
     default="google-doc",
     help="Document type (default: google-doc)",
 )
-@click.pass_context
-def source_add_drive(ctx, file_id, title, notebook_id, mime_type):
+@with_client
+def source_add_drive(ctx, file_id, title, notebook_id, mime_type, client_auth):
     """Add a Google Drive document as a source."""
-    try:
-        from .rpc import DriveMimeType
+    from .rpc import DriveMimeType
 
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
+    mime_map = {
+        "google-doc": DriveMimeType.GOOGLE_DOC.value,
+        "google-slides": DriveMimeType.GOOGLE_SLIDES.value,
+        "google-sheets": DriveMimeType.GOOGLE_SHEETS.value,
+        "pdf": DriveMimeType.PDF.value,
+    }
+    mime = mime_map[mime_type]
 
-        mime_map = {
-            "google-doc": DriveMimeType.GOOGLE_DOC.value,
-            "google-slides": DriveMimeType.GOOGLE_SLIDES.value,
-            "google-sheets": DriveMimeType.GOOGLE_SHEETS.value,
-            "pdf": DriveMimeType.PDF.value,
-        }
-        mime = mime_map[mime_type]
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            with console.status("Adding Drive source..."):
+                source = await client.sources.add_drive(nb_id, file_id, title, mime)
 
-        async def _add():
-            async with NotebookLMClient(auth) as client:
-                return await client.sources.add_drive(nb_id, file_id, title, mime)
+            console.print(f"[green]Added Drive source:[/green] {source.id}")
+            console.print(f"[bold]Title:[/bold] {source.title}")
 
-        with console.status("Adding Drive source..."):
-            source = run_async(_add())
-
-        console.print(f"[green]Added Drive source:[/green] {source.id}")
-        console.print(f"[bold]Title:[/bold] {source.title}")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 # =============================================================================
@@ -1497,125 +1355,108 @@ def artifact():
     help="Filter by type",
 )
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
-@click.pass_context
-def artifact_list(ctx, notebook_id, artifact_type, json_output):
+@with_client
+def artifact_list(ctx, notebook_id, artifact_type, json_output, client_auth):
     """List artifacts in a notebook."""
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
+    type_filter = (
+        None if artifact_type == "all" else ARTIFACT_TYPE_MAP.get(artifact_type)
+    )
 
-        # Get type filter (None for "all", enum value for specific types)
-        type_filter = (
-            None if artifact_type == "all" else ARTIFACT_TYPE_MAP.get(artifact_type)
-        )
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            artifacts = await client.artifacts.list(nb_id, artifact_type=type_filter)
 
-        async def _list():
-            async with NotebookLMClient(auth) as client:
+            # Also fetch mind maps (stored separately with notes)
+            if type_filter is None or type_filter == 5:
+                mind_maps = await client.notes.list_mind_maps(nb_id)
+                for mm in mind_maps:
+                    if isinstance(mm, list) and len(mm) > 0:
+                        mm_id = mm[0] if len(mm) > 0 else ""
+                        title = "Mind Map"
+                        if (
+                            len(mm) > 1
+                            and isinstance(mm[1], list)
+                            and len(mm[1]) > 4
+                        ):
+                            title = mm[1][4] or "Mind Map"
+                        mm_artifact = Artifact(
+                            id=str(mm_id),
+                            title=str(title),
+                            artifact_type=5,
+                            status=3,
+                            created_at=None,
+                            variant=None,
+                        )
+                        artifacts.append(mm_artifact)
 
-                artifacts = await client.artifacts.list(nb_id, artifact_type=type_filter)
+            nb = None
+            if json_output:
+                nb = await client.notebooks.get(nb_id)
 
-                # Also fetch mind maps (stored separately with notes)
-                # Only include if type filter is "all" or "mind-map" (type 5)
-                if type_filter is None or type_filter == 5:
-                    mind_maps = await client.notes.list_mind_maps(nb_id)
-                    for mm in mind_maps:
-                        if isinstance(mm, list) and len(mm) > 0:
-                            mm_id = mm[0] if len(mm) > 0 else ""
-                            # Mind map structure: [id, [id, json_content, metadata, None, title], ...]
-                            # Title is at mm[1][4]
-                            title = "Mind Map"
-                            if (
-                                len(mm) > 1
-                                and isinstance(mm[1], list)
-                                and len(mm[1]) > 4
-                            ):
-                                title = mm[1][4] or "Mind Map"
-                            # Create Artifact-like object for mind map
-                            mm_artifact = Artifact(
-                                id=str(mm_id),
-                                title=str(title),
-                                artifact_type=5,  # MIND_MAP
-                                status=3,  # completed
-                                created_at=None,
-                                variant=None,
-                            )
-                            artifacts.append(mm_artifact)
+            if json_output:
+                def _get_status_str(art):
+                    if art.is_completed:
+                        return "completed"
+                    elif art.is_processing:
+                        return "processing"
+                    return str(art.status)
 
-                nb = None
-                if json_output:
-                    nb = await client.notebooks.get(nb_id)
-                return artifacts, nb
+                data = {
+                    "notebook_id": nb_id,
+                    "notebook_title": nb.title if nb else None,
+                    "artifacts": [
+                        {
+                            "index": i,
+                            "id": art.id,
+                            "title": art.title,
+                            "type": get_artifact_type_display(
+                                art.artifact_type, art.variant, art.report_subtype
+                            ).split(" ", 1)[-1],
+                            "type_id": art.artifact_type,
+                            "status": _get_status_str(art),
+                            "status_id": art.status,
+                            "created_at": art.created_at.isoformat()
+                            if art.created_at
+                            else None,
+                        }
+                        for i, art in enumerate(artifacts, 1)
+                    ],
+                    "count": len(artifacts),
+                }
+                json_output_response(data)
+                return
 
-        artifacts, nb = run_async(_list())
+            if not artifacts:
+                console.print(f"[yellow]No {artifact_type} artifacts found[/yellow]")
+                return
 
-        if json_output:
+            table = Table(title=f"Artifacts in {nb_id}")
+            table.add_column("ID", style="cyan")
+            table.add_column("Title", style="green")
+            table.add_column("Type")
+            table.add_column("Created", style="dim")
+            table.add_column("Status", style="yellow")
 
-            def _get_status_str(art):
-                if art.is_completed:
-                    return "completed"
-                elif art.is_processing:
-                    return "processing"
-                return str(art.status)
+            for art in artifacts:
+                type_display = get_artifact_type_display(
+                    art.artifact_type, art.variant, art.report_subtype
+                )
+                created = (
+                    art.created_at.strftime("%Y-%m-%d %H:%M") if art.created_at else "-"
+                )
+                status = (
+                    "completed"
+                    if art.is_completed
+                    else "processing"
+                    if art.is_processing
+                    else str(art.status)
+                )
+                table.add_row(art.id, art.title, type_display, created, status)
 
-            data = {
-                "notebook_id": nb_id,
-                "notebook_title": nb.title if nb else None,
-                "artifacts": [
-                    {
-                        "index": i,
-                        "id": art.id,
-                        "title": art.title,
-                        "type": get_artifact_type_display(
-                            art.artifact_type, art.variant, art.report_subtype
-                        ).split(" ", 1)[-1],
-                        "type_id": art.artifact_type,
-                        "status": _get_status_str(art),
-                        "status_id": art.status,
-                        "created_at": art.created_at.isoformat()
-                        if art.created_at
-                        else None,
-                    }
-                    for i, art in enumerate(artifacts, 1)
-                ],
-                "count": len(artifacts),
-            }
-            json_output_response(data)
-            return
+            console.print(table)
 
-        if not artifacts:
-            console.print(f"[yellow]No {artifact_type} artifacts found[/yellow]")
-            return
-
-        table = Table(title=f"Artifacts in {nb_id}")
-        table.add_column("ID", style="cyan")
-        table.add_column("Title", style="green")
-        table.add_column("Type")
-        table.add_column("Created", style="dim")
-        table.add_column("Status", style="yellow")
-
-        for art in artifacts:
-            type_display = get_artifact_type_display(
-                art.artifact_type, art.variant, art.report_subtype
-            )
-            created = (
-                art.created_at.strftime("%Y-%m-%d %H:%M") if art.created_at else "-"
-            )
-            status = (
-                "completed"
-                if art.is_completed
-                else "processing"
-                if art.is_processing
-                else str(art.status)
-            )
-            table.add_row(art.id, art.title, type_display, created, status)
-
-        console.print(table)
-
-    except Exception as e:
-        if json_output:
-            json_error_response("ERROR", str(e))
-        handle_error(e)
+    return _run()
 
 
 @artifact.command("get")
@@ -1627,37 +1468,31 @@ def artifact_list(ctx, notebook_id, artifact_type, json_output):
     default=None,
     help="Notebook ID (uses current if not set)",
 )
-@click.pass_context
-def artifact_get(ctx, artifact_id, notebook_id):
+@with_client
+def artifact_get(ctx, artifact_id, notebook_id, client_auth):
     """Get artifact details."""
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _get():
-            async with NotebookLMClient(auth) as client:
-                return await client.artifacts.get(nb_id, artifact_id)
-
-        artifact = run_async(_get())
-        if artifact:
-            console.print(f"[bold cyan]Artifact:[/bold cyan] {artifact.id}")
-            console.print(f"[bold]Title:[/bold] {artifact.title}")
-            console.print(
-                f"[bold]Type:[/bold] {get_artifact_type_display(artifact.artifact_type, artifact.variant, artifact.report_subtype)}"
-            )
-            console.print(
-                f"[bold]Status:[/bold] {'completed' if artifact.is_completed else 'processing' if artifact.is_processing else str(artifact.status)}"
-            )
-            if artifact.created_at:
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            artifact = await client.artifacts.get(nb_id, artifact_id)
+            if artifact:
+                console.print(f"[bold cyan]Artifact:[/bold cyan] {artifact.id}")
+                console.print(f"[bold]Title:[/bold] {artifact.title}")
                 console.print(
-                    f"[bold]Created:[/bold] {artifact.created_at.strftime('%Y-%m-%d %H:%M')}"
+                    f"[bold]Type:[/bold] {get_artifact_type_display(artifact.artifact_type, artifact.variant, artifact.report_subtype)}"
                 )
-        else:
-            console.print("[yellow]Artifact not found[/yellow]")
+                console.print(
+                    f"[bold]Status:[/bold] {'completed' if artifact.is_completed else 'processing' if artifact.is_processing else str(artifact.status)}"
+                )
+                if artifact.created_at:
+                    console.print(
+                        f"[bold]Created:[/bold] {artifact.created_at.strftime('%Y-%m-%d %H:%M')}"
+                    )
+            else:
+                console.print("[yellow]Artifact not found[/yellow]")
 
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @artifact.command("rename")
@@ -1670,33 +1505,24 @@ def artifact_get(ctx, artifact_id, notebook_id):
     default=None,
     help="Notebook ID (uses current if not set)",
 )
-@click.pass_context
-def artifact_rename(ctx, artifact_id, new_title, notebook_id):
+@with_client
+def artifact_rename(ctx, artifact_id, new_title, notebook_id, client_auth):
     """Rename an artifact."""
-    notebook_id = require_notebook(notebook_id)
-    try:
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _rename():
-            async with NotebookLMClient(auth) as client:
-                # Check if this is a mind map (stored with notes, not artifacts)
-                # Mind maps cannot be renamed - reject immediately
-                mind_maps = await client.notes.list_mind_maps(notebook_id)
-                for mm in mind_maps:
-                    if mm[0] == artifact_id:
-                        raise click.ClickException("Mind maps cannot be renamed")
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            # Check if this is a mind map (stored with notes, not artifacts)
+            mind_maps = await client.notes.list_mind_maps(nb_id)
+            for mm in mind_maps:
+                if mm[0] == artifact_id:
+                    raise click.ClickException("Mind maps cannot be renamed")
 
-                # Regular artifact - use rename_artifact
+            artifact = await client.artifacts.rename(nb_id, artifact_id, new_title)
+            console.print(f"[green]Renamed artifact:[/green] {artifact.id}")
+            console.print(f"[bold]New title:[/bold] {artifact.title}")
 
-                return await client.artifacts.rename(notebook_id, artifact_id, new_title)
-
-        artifact = run_async(_rename())
-        console.print(f"[green]Renamed artifact:[/green] {artifact.id}")
-        console.print(f"[bold]New title:[/bold] {artifact.title}")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @artifact.command("delete")
@@ -1709,43 +1535,31 @@ def artifact_rename(ctx, artifact_id, new_title, notebook_id):
     help="Notebook ID (uses current if not set)",
 )
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
-@click.pass_context
-def artifact_delete(ctx, artifact_id, notebook_id, yes):
+@with_client
+def artifact_delete(ctx, artifact_id, notebook_id, yes, client_auth):
     """Delete an artifact."""
-    notebook_id = require_notebook(notebook_id)
+    if not yes and not click.confirm(f"Delete artifact {artifact_id}?"):
+        return
 
-    try:
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _delete():
-            async with NotebookLMClient(auth) as client:
-                # Check if this is a mind map (stored with notes)
-                # Mind maps can only be cleared, not truly deleted
-                mind_maps = await client.notes.list_mind_maps(notebook_id)
-                for mm in mind_maps:
-                    if mm[0] == artifact_id:
-                        await client.notes.delete(notebook_id, artifact_id)
-                        return "mind_map"
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            # Check if this is a mind map (stored with notes)
+            mind_maps = await client.notes.list_mind_maps(nb_id)
+            for mm in mind_maps:
+                if mm[0] == artifact_id:
+                    await client.notes.delete(nb_id, artifact_id)
+                    console.print(f"[yellow]Cleared mind map:[/yellow] {artifact_id}")
+                    console.print(
+                        "[dim]Note: Mind maps are cleared, not removed. Google may garbage collect them later.[/dim]"
+                    )
+                    return
 
-                # Regular artifact
-                await client.artifacts.delete(notebook_id, artifact_id)
-                return "artifact"
-
-        if not yes and not click.confirm(f"Delete artifact {artifact_id}?"):
-            return
-
-        result = run_async(_delete())
-        if result == "mind_map":
-            console.print(f"[yellow]Cleared mind map:[/yellow] {artifact_id}")
-            console.print(
-                "[dim]Note: Mind maps are cleared, not removed. Google may garbage collect them later.[/dim]"
-            )
-        else:
+            await client.artifacts.delete(nb_id, artifact_id)
             console.print(f"[green]Deleted artifact:[/green] {artifact_id}")
 
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @artifact.command("export")
@@ -1761,31 +1575,25 @@ def artifact_delete(ctx, artifact_id, notebook_id, yes):
 @click.option(
     "--type", "export_type", type=click.Choice(["docs", "sheets"]), default="docs"
 )
-@click.pass_context
-def artifact_export(ctx, artifact_id, notebook_id, title, export_type):
+@with_client
+def artifact_export(ctx, artifact_id, notebook_id, title, export_type, client_auth):
     """Export artifact to Google Docs/Sheets."""
-    notebook_id = require_notebook(notebook_id)
-    try:
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _export():
-            async with NotebookLMClient(auth) as client:
-                artifact = await client.artifacts.get(notebook_id, artifact_id)
-                content = str(artifact) if artifact else ""
-                return await client.artifacts.export(
-                    notebook_id, artifact_id, content, title, export_type
-                )
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            artifact = await client.artifacts.get(nb_id, artifact_id)
+            content = str(artifact) if artifact else ""
+            result = await client.artifacts.export(
+                nb_id, artifact_id, content, title, export_type
+            )
+            if result:
+                console.print(f"[green]Exported to Google {export_type.title()}[/green]")
+                console.print(result)
+            else:
+                console.print("[yellow]Export may have failed[/yellow]")
 
-        result = run_async(_export())
-        if result:
-            console.print(f"[green]Exported to Google {export_type.title()}[/green]")
-            console.print(result)
-        else:
-            console.print("[yellow]Export may have failed[/yellow]")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @artifact.command("poll")
@@ -1797,24 +1605,18 @@ def artifact_export(ctx, artifact_id, notebook_id, title, export_type):
     default=None,
     help="Notebook ID (uses current if not set)",
 )
-@click.pass_context
-def artifact_poll(ctx, task_id, notebook_id):
+@with_client
+def artifact_poll(ctx, task_id, notebook_id, client_auth):
     """Poll generation status."""
-    notebook_id = require_notebook(notebook_id)
-    try:
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _poll():
-            async with NotebookLMClient(auth) as client:
-                return await client.artifacts.poll_status(notebook_id, task_id)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            status = await client.artifacts.poll_status(nb_id, task_id)
+            console.print("[bold cyan]Task Status:[/bold cyan]")
+            console.print(status)
 
-        status = run_async(_poll())
-        console.print("[bold cyan]Task Status:[/bold cyan]")
-        console.print(status)
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @artifact.command("suggestions")
@@ -1827,48 +1629,42 @@ def artifact_poll(ctx, task_id, notebook_id):
 )
 @click.option("--source", "source_ids", multiple=True, help="Limit to specific sources")
 @click.option("--json", "json_output", is_flag=True, help="Output JSON format")
-@click.pass_context
-def artifact_suggestions(ctx, notebook_id, source_ids, json_output):
+@with_client
+def artifact_suggestions(ctx, notebook_id, source_ids, json_output, client_auth):
     """Get AI-suggested report topics based on notebook content."""
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _suggest():
-            async with NotebookLMClient(auth) as client:
-                ids = list(source_ids) if source_ids else None
-                return await client.artifacts.suggest_reports(nb_id, ids)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            ids = list(source_ids) if source_ids else None
+            suggestions = await client.artifacts.suggest_reports(nb_id, ids)
 
-        suggestions = run_async(_suggest())
+            if not suggestions:
+                console.print("[yellow]No suggestions available[/yellow]")
+                return
 
-        if not suggestions:
-            console.print("[yellow]No suggestions available[/yellow]")
-            return
+            if json_output:
+                data = [
+                    {"title": s.title, "description": s.description, "prompt": s.prompt}
+                    for s in suggestions
+                ]
+                console.print(json.dumps(data, indent=2))
+                return
 
-        if json_output:
-            data = [
-                {"title": s.title, "description": s.description, "prompt": s.prompt}
-                for s in suggestions
-            ]
-            console.print(json.dumps(data, indent=2))
-            return
+            table = Table(title="Suggested Reports")
+            table.add_column("#", style="dim")
+            table.add_column("Title", style="green")
+            table.add_column("Description")
 
-        table = Table(title="Suggested Reports")
-        table.add_column("#", style="dim")
-        table.add_column("Title", style="green")
-        table.add_column("Description")
+            for i, suggestion in enumerate(suggestions, 1):
+                table.add_row(str(i), suggestion.title, suggestion.description)
 
-        for i, suggestion in enumerate(suggestions, 1):
-            table.add_row(str(i), suggestion.title, suggestion.description)
+            console.print(table)
+            console.print(
+                '\n[dim]Use the prompt with: notebooklm generate report "<prompt>"[/dim]'
+            )
 
-        console.print(table)
-        console.print(
-            '\n[dim]Use the prompt with: notebooklm generate report "<prompt>"[/dim]'
-        )
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 # =============================================================================
@@ -1931,7 +1727,7 @@ def generate():
     "--wait/--no-wait", default=False, help="Wait for completion (default: no-wait)"
 )
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
-@click.pass_context
+@with_client
 def generate_audio(
     ctx,
     description,
@@ -1941,6 +1737,7 @@ def generate_audio(
     language,
     wait,
     json_output,
+    client_auth,
 ):
     """Generate audio overview (podcast).
 
@@ -1949,88 +1746,75 @@ def generate_audio(
       notebooklm generate audio "deep dive focusing on key themes"
       notebooklm generate audio "make it funny and casual" --format debate
     """
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
+    format_map = {
+        "deep-dive": AudioFormat.DEEP_DIVE,
+        "brief": AudioFormat.BRIEF,
+        "critique": AudioFormat.CRITIQUE,
+        "debate": AudioFormat.DEBATE,
+    }
+    length_map = {
+        "short": AudioLength.SHORT,
+        "default": AudioLength.DEFAULT,
+        "long": AudioLength.LONG,
+    }
 
-        format_map = {
-            "deep-dive": AudioFormat.DEEP_DIVE,
-            "brief": AudioFormat.BRIEF,
-            "critique": AudioFormat.CRITIQUE,
-            "debate": AudioFormat.DEBATE,
-        }
-        length_map = {
-            "short": AudioLength.SHORT,
-            "default": AudioLength.DEFAULT,
-            "long": AudioLength.LONG,
-        }
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            result = await client.artifacts.generate_audio(
+                nb_id,
+                language=language,
+                instructions=description or None,
+                audio_format=format_map[audio_format],
+                audio_length=length_map[audio_length],
+            )
 
-        async def _generate():
-            async with NotebookLMClient(auth) as client:
-                result = await client.artifacts.generate_audio(
-                    nb_id,
-                    language=language,
-                    instructions=description or None,
-                    audio_format=format_map[audio_format],
-                    audio_length=length_map[audio_length],
-                )
+            if not result:
+                if json_output:
+                    json_error_response("GENERATION_FAILED", "Audio generation failed")
+                else:
+                    console.print("[red]Audio generation failed[/red]")
+                return
 
-                if not result:
-                    return None
-
-                if wait:
-                    if not json_output:
-                        console.print(
-                            f"[yellow]Generating audio...[/yellow] Task: {result.get('artifact_id')}"
-                        )
-                    return await client.artifacts.wait_for_completion(
-                        nb_id, result["artifact_id"], poll_interval=10.0
+            if wait:
+                if not json_output:
+                    console.print(
+                        f"[yellow]Generating audio...[/yellow] Task: {result.get('artifact_id')}"
                     )
-                return result
-
-        status = run_async(_generate())
-
-        if json_output:
-            if not status:
-                json_error_response("GENERATION_FAILED", "Audio generation failed")
-            elif hasattr(status, "is_complete") and status.is_complete:
-                data = {
-                    "artifact_id": status.artifact_id
-                    if hasattr(status, "artifact_id")
-                    else None,
-                    "status": "completed",
-                    "url": status.url,
-                }
-                json_output_response(data)
-            elif hasattr(status, "is_failed") and status.is_failed:
-                json_error_response(
-                    "GENERATION_FAILED", status.error or "Audio generation failed"
+                status = await client.artifacts.wait_for_completion(
+                    nb_id, result["artifact_id"], poll_interval=10.0
                 )
             else:
-                artifact_id = (
-                    status.get("artifact_id") if isinstance(status, dict) else None
-                )
-                data = {
-                    "artifact_id": artifact_id,
-                    "status": "pending",
-                }
-                json_output_response(data)
-            return
+                status = result
 
-        if not status:
-            console.print("[red]Audio generation failed[/red]")
-        elif hasattr(status, "is_complete") and status.is_complete:
-            console.print(f"[green]Audio ready:[/green] {status.url}")
-        elif hasattr(status, "is_failed") and status.is_failed:
-            console.print(f"[red]Failed:[/red] {status.error}")
-        else:
-            console.print(f"[yellow]Started:[/yellow] {status}")
+            if json_output:
+                if hasattr(status, "is_complete") and status.is_complete:
+                    data = {
+                        "artifact_id": status.artifact_id
+                        if hasattr(status, "artifact_id")
+                        else None,
+                        "status": "completed",
+                        "url": status.url,
+                    }
+                    json_output_response(data)
+                elif hasattr(status, "is_failed") and status.is_failed:
+                    json_error_response(
+                        "GENERATION_FAILED", status.error or "Audio generation failed"
+                    )
+                else:
+                    artifact_id = (
+                        status.get("artifact_id") if isinstance(status, dict) else None
+                    )
+                    json_output_response({"artifact_id": artifact_id, "status": "pending"})
+            else:
+                if hasattr(status, "is_complete") and status.is_complete:
+                    console.print(f"[green]Audio ready:[/green] {status.url}")
+                elif hasattr(status, "is_failed") and status.is_failed:
+                    console.print(f"[red]Failed:[/red] {status.error}")
+                else:
+                    console.print(f"[yellow]Started:[/yellow] {status}")
 
-    except Exception as e:
-        if json_output:
-            json_error_response("ERROR", str(e))
-        handle_error(e)
+    return _run()
 
 
 @generate.command("video")
@@ -2070,9 +1854,9 @@ def generate_audio(
     "--wait/--no-wait", default=False, help="Wait for completion (default: no-wait)"
 )
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
-@click.pass_context
+@with_client
 def generate_video(
-    ctx, description, notebook_id, video_format, style, language, wait, json_output
+    ctx, description, notebook_id, video_format, style, language, wait, json_output, client_auth
 ):
     """Generate video overview.
 
@@ -2082,89 +1866,76 @@ def generate_video(
       notebooklm generate video "professional presentation" --style classic
       notebooklm generate video --style kawaii
     """
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
+    format_map = {"explainer": VideoFormat.EXPLAINER, "brief": VideoFormat.BRIEF}
+    style_map = {
+        "auto": VideoStyle.AUTO_SELECT,
+        "classic": VideoStyle.CLASSIC,
+        "whiteboard": VideoStyle.WHITEBOARD,
+        "kawaii": VideoStyle.KAWAII,
+        "anime": VideoStyle.ANIME,
+        "watercolor": VideoStyle.WATERCOLOR,
+        "retro-print": VideoStyle.RETRO_PRINT,
+        "heritage": VideoStyle.HERITAGE,
+        "paper-craft": VideoStyle.PAPER_CRAFT,
+    }
 
-        format_map = {"explainer": VideoFormat.EXPLAINER, "brief": VideoFormat.BRIEF}
-        style_map = {
-            "auto": VideoStyle.AUTO_SELECT,
-            "classic": VideoStyle.CLASSIC,
-            "whiteboard": VideoStyle.WHITEBOARD,
-            "kawaii": VideoStyle.KAWAII,
-            "anime": VideoStyle.ANIME,
-            "watercolor": VideoStyle.WATERCOLOR,
-            "retro-print": VideoStyle.RETRO_PRINT,
-            "heritage": VideoStyle.HERITAGE,
-            "paper-craft": VideoStyle.PAPER_CRAFT,
-        }
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            result = await client.artifacts.generate_video(
+                nb_id,
+                language=language,
+                instructions=description or None,
+                video_format=format_map[video_format],
+                video_style=style_map[style],
+            )
 
-        async def _generate():
-            async with NotebookLMClient(auth) as client:
-                result = await client.artifacts.generate_video(
-                    nb_id,
-                    language=language,
-                    instructions=description or None,
-                    video_format=format_map[video_format],
-                    video_style=style_map[style],
-                )
+            if not result:
+                if json_output:
+                    json_error_response("GENERATION_FAILED", "Video generation failed")
+                else:
+                    console.print("[red]Video generation failed[/red]")
+                return
 
-                if not result:
-                    return None
-
-                if wait and result.get("artifact_id"):
-                    if not json_output:
-                        console.print(
-                            f"[yellow]Generating video...[/yellow] Task: {result.get('artifact_id')}"
-                        )
-                    return await client.artifacts.wait_for_completion(
-                        nb_id, result["artifact_id"], poll_interval=10.0, timeout=600.0
+            if wait and result.get("artifact_id"):
+                if not json_output:
+                    console.print(
+                        f"[yellow]Generating video...[/yellow] Task: {result.get('artifact_id')}"
                     )
-                return result
-
-        status = run_async(_generate())
-
-        if json_output:
-            if not status:
-                json_error_response("GENERATION_FAILED", "Video generation failed")
-            elif hasattr(status, "is_complete") and status.is_complete:
-                data = {
-                    "artifact_id": status.artifact_id
-                    if hasattr(status, "artifact_id")
-                    else None,
-                    "status": "completed",
-                    "url": status.url,
-                }
-                json_output_response(data)
-            elif hasattr(status, "is_failed") and status.is_failed:
-                json_error_response(
-                    "GENERATION_FAILED", status.error or "Video generation failed"
+                status = await client.artifacts.wait_for_completion(
+                    nb_id, result["artifact_id"], poll_interval=10.0, timeout=600.0
                 )
             else:
-                artifact_id = (
-                    status.get("artifact_id") if isinstance(status, dict) else None
-                )
-                data = {
-                    "artifact_id": artifact_id,
-                    "status": "pending",
-                }
-                json_output_response(data)
-            return
+                status = result
 
-        if not status:
-            console.print("[red]Video generation failed[/red]")
-        elif hasattr(status, "is_complete") and status.is_complete:
-            console.print(f"[green]Video ready:[/green] {status.url}")
-        elif hasattr(status, "is_failed") and status.is_failed:
-            console.print(f"[red]Failed:[/red] {status.error}")
-        else:
-            console.print(f"[yellow]Started:[/yellow] {status}")
+            if json_output:
+                if hasattr(status, "is_complete") and status.is_complete:
+                    data = {
+                        "artifact_id": status.artifact_id
+                        if hasattr(status, "artifact_id")
+                        else None,
+                        "status": "completed",
+                        "url": status.url,
+                    }
+                    json_output_response(data)
+                elif hasattr(status, "is_failed") and status.is_failed:
+                    json_error_response(
+                        "GENERATION_FAILED", status.error or "Video generation failed"
+                    )
+                else:
+                    artifact_id = (
+                        status.get("artifact_id") if isinstance(status, dict) else None
+                    )
+                    json_output_response({"artifact_id": artifact_id, "status": "pending"})
+            else:
+                if hasattr(status, "is_complete") and status.is_complete:
+                    console.print(f"[green]Video ready:[/green] {status.url}")
+                elif hasattr(status, "is_failed") and status.is_failed:
+                    console.print(f"[red]Failed:[/red] {status.error}")
+                else:
+                    console.print(f"[yellow]Started:[/yellow] {status}")
 
-    except Exception as e:
-        if json_output:
-            json_error_response("ERROR", str(e))
-        handle_error(e)
+    return _run()
 
 
 @generate.command("slide-deck")
@@ -2192,9 +1963,9 @@ def generate_video(
 @click.option(
     "--wait/--no-wait", default=False, help="Wait for completion (default: no-wait)"
 )
-@click.pass_context
+@with_client
 def generate_slide_deck(
-    ctx, description, notebook_id, deck_format, deck_length, language, wait
+    ctx, description, notebook_id, deck_format, deck_length, language, wait, client_auth
 ):
     """Generate slide deck.
 
@@ -2203,53 +1974,46 @@ def generate_slide_deck(
       notebooklm generate slide-deck "include speaker notes"
       notebooklm generate slide-deck "executive summary" --format presenter --length short
     """
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
+    format_map = {
+        "detailed": SlideDeckFormat.DETAILED_DECK,
+        "presenter": SlideDeckFormat.PRESENTER_SLIDES,
+    }
+    length_map = {
+        "default": SlideDeckLength.DEFAULT,
+        "short": SlideDeckLength.SHORT,
+    }
 
-        format_map = {
-            "detailed": SlideDeckFormat.DETAILED_DECK,
-            "presenter": SlideDeckFormat.PRESENTER_SLIDES,
-        }
-        length_map = {
-            "default": SlideDeckLength.DEFAULT,
-            "short": SlideDeckLength.SHORT,
-        }
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            result = await client.artifacts.generate_slide_deck(
+                nb_id,
+                language=language,
+                instructions=description or None,
+                slide_deck_format=format_map[deck_format],
+                slide_deck_length=length_map[deck_length],
+            )
 
-        async def _generate():
-            async with NotebookLMClient(auth) as client:
-                result = await client.artifacts.generate_slide_deck(
-                    nb_id,
-                    language=language,
-                    instructions=description or None,
-                    slide_deck_format=format_map[deck_format],
-                    slide_deck_length=length_map[deck_length],
+            if not result:
+                console.print("[red]Slide deck generation failed[/red]")
+                return
+
+            if wait and result.get("artifact_id"):
+                console.print(
+                    f"[yellow]Generating slide deck...[/yellow] Task: {result.get('artifact_id')}"
                 )
+                status = await client.artifacts.wait_for_completion(
+                    nb_id, result["artifact_id"], poll_interval=10.0
+                )
+            else:
+                status = result
 
-                if not result:
-                    return None
+            if hasattr(status, "is_complete") and status.is_complete:
+                console.print(f"[green]Slide deck ready:[/green] {status.url}")
+            else:
+                console.print(f"[yellow]Started:[/yellow] {status}")
 
-                if wait and result.get("artifact_id"):
-                    console.print(
-                        f"[yellow]Generating slide deck...[/yellow] Task: {result.get('artifact_id')}"
-                    )
-                    return await client.artifacts.wait_for_completion(
-                        nb_id, result["artifact_id"], poll_interval=10.0
-                    )
-                return result
-
-        status = run_async(_generate())
-
-        if not status:
-            console.print("[red]Slide deck generation failed[/red]")
-        elif hasattr(status, "is_complete") and status.is_complete:
-            console.print(f"[green]Slide deck ready:[/green] {status.url}")
-        else:
-            console.print(f"[yellow]Started:[/yellow] {status}")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @generate.command("quiz")
@@ -2270,8 +2034,8 @@ def generate_slide_deck(
 @click.option(
     "--wait/--no-wait", default=False, help="Wait for completion (default: no-wait)"
 )
-@click.pass_context
-def generate_quiz(ctx, description, notebook_id, quantity, difficulty, wait):
+@with_client
+def generate_quiz(ctx, description, notebook_id, quantity, difficulty, wait, client_auth):
     """Generate quiz.
 
     \b
@@ -2279,59 +2043,52 @@ def generate_quiz(ctx, description, notebook_id, quantity, difficulty, wait):
       notebooklm generate quiz "focus on vocabulary terms"
       notebooklm generate quiz "test key concepts" --difficulty hard --quantity more
     """
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
+    quantity_map = {
+        "fewer": QuizQuantity.FEWER,
+        "standard": QuizQuantity.STANDARD,
+        "more": QuizQuantity.MORE,
+    }
+    difficulty_map = {
+        "easy": QuizDifficulty.EASY,
+        "medium": QuizDifficulty.MEDIUM,
+        "hard": QuizDifficulty.HARD,
+    }
 
-        quantity_map = {
-            "fewer": QuizQuantity.FEWER,
-            "standard": QuizQuantity.STANDARD,
-            "more": QuizQuantity.MORE,
-        }
-        difficulty_map = {
-            "easy": QuizDifficulty.EASY,
-            "medium": QuizDifficulty.MEDIUM,
-            "hard": QuizDifficulty.HARD,
-        }
-
-        async def _generate():
-            async with NotebookLMClient(auth) as client:
-                result = await client.artifacts.generate_quiz(
-                    nb_id,
-                    instructions=description or None,
-                    quantity=quantity_map[quantity],
-                    difficulty=difficulty_map[difficulty],
-                )
-
-                if not result:
-                    return None
-
-                task_id = result.get("artifact_id") or (
-                    result[0] if isinstance(result, list) else None
-                )
-                if wait and task_id:
-                    console.print(f"[yellow]Generating quiz...[/yellow]")
-                    return await client.artifacts.wait_for_completion(
-                        nb_id, task_id, poll_interval=5.0
-                    )
-                return result
-
-        status = run_async(_generate())
-
-        if not status:
-            console.print(
-                "[red]Quiz generation failed (Google may be rate limiting)[/red]"
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            result = await client.artifacts.generate_quiz(
+                nb_id,
+                instructions=description or None,
+                quantity=quantity_map[quantity],
+                difficulty=difficulty_map[difficulty],
             )
-        elif hasattr(status, "is_complete") and status.is_complete:
-            console.print("[green]Quiz ready[/green]")
-        elif hasattr(status, "is_failed") and status.is_failed:
-            console.print(f"[red]Failed:[/red] {status.error}")
-        else:
-            console.print(f"[yellow]Started:[/yellow] {status}")
 
-    except Exception as e:
-        handle_error(e)
+            if not result:
+                console.print(
+                    "[red]Quiz generation failed (Google may be rate limiting)[/red]"
+                )
+                return
+
+            task_id = result.get("artifact_id") or (
+                result[0] if isinstance(result, list) else None
+            )
+            if wait and task_id:
+                console.print("[yellow]Generating quiz...[/yellow]")
+                status = await client.artifacts.wait_for_completion(
+                    nb_id, task_id, poll_interval=5.0
+                )
+            else:
+                status = result
+
+            if hasattr(status, "is_complete") and status.is_complete:
+                console.print("[green]Quiz ready[/green]")
+            elif hasattr(status, "is_failed") and status.is_failed:
+                console.print(f"[red]Failed:[/red] {status.error}")
+            else:
+                console.print(f"[yellow]Started:[/yellow] {status}")
+
+    return _run()
 
 
 @generate.command("flashcards")
@@ -2352,8 +2109,8 @@ def generate_quiz(ctx, description, notebook_id, quantity, difficulty, wait):
 @click.option(
     "--wait/--no-wait", default=False, help="Wait for completion (default: no-wait)"
 )
-@click.pass_context
-def generate_flashcards(ctx, description, notebook_id, quantity, difficulty, wait):
+@with_client
+def generate_flashcards(ctx, description, notebook_id, quantity, difficulty, wait, client_auth):
     """Generate flashcards.
 
     \b
@@ -2361,59 +2118,52 @@ def generate_flashcards(ctx, description, notebook_id, quantity, difficulty, wai
       notebooklm generate flashcards "vocabulary terms only"
       notebooklm generate flashcards --quantity more --difficulty easy
     """
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
+    quantity_map = {
+        "fewer": QuizQuantity.FEWER,
+        "standard": QuizQuantity.STANDARD,
+        "more": QuizQuantity.MORE,
+    }
+    difficulty_map = {
+        "easy": QuizDifficulty.EASY,
+        "medium": QuizDifficulty.MEDIUM,
+        "hard": QuizDifficulty.HARD,
+    }
 
-        quantity_map = {
-            "fewer": QuizQuantity.FEWER,
-            "standard": QuizQuantity.STANDARD,
-            "more": QuizQuantity.MORE,
-        }
-        difficulty_map = {
-            "easy": QuizDifficulty.EASY,
-            "medium": QuizDifficulty.MEDIUM,
-            "hard": QuizDifficulty.HARD,
-        }
-
-        async def _generate():
-            async with NotebookLMClient(auth) as client:
-                result = await client.artifacts.generate_flashcards(
-                    nb_id,
-                    instructions=description or None,
-                    quantity=quantity_map[quantity],
-                    difficulty=difficulty_map[difficulty],
-                )
-
-                if not result:
-                    return None
-
-                task_id = result.get("artifact_id") or (
-                    result[0] if isinstance(result, list) else None
-                )
-                if wait and task_id:
-                    console.print(f"[yellow]Generating flashcards...[/yellow]")
-                    return await client.artifacts.wait_for_completion(
-                        nb_id, task_id, poll_interval=5.0
-                    )
-                return result
-
-        status = run_async(_generate())
-
-        if not status:
-            console.print(
-                "[red]Flashcard generation failed (Google may be rate limiting)[/red]"
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            result = await client.artifacts.generate_flashcards(
+                nb_id,
+                instructions=description or None,
+                quantity=quantity_map[quantity],
+                difficulty=difficulty_map[difficulty],
             )
-        elif hasattr(status, "is_complete") and status.is_complete:
-            console.print("[green]Flashcards ready[/green]")
-        elif hasattr(status, "is_failed") and status.is_failed:
-            console.print(f"[red]Failed:[/red] {status.error}")
-        else:
-            console.print(f"[yellow]Started:[/yellow] {status}")
 
-    except Exception as e:
-        handle_error(e)
+            if not result:
+                console.print(
+                    "[red]Flashcard generation failed (Google may be rate limiting)[/red]"
+                )
+                return
+
+            task_id = result.get("artifact_id") or (
+                result[0] if isinstance(result, list) else None
+            )
+            if wait and task_id:
+                console.print("[yellow]Generating flashcards...[/yellow]")
+                status = await client.artifacts.wait_for_completion(
+                    nb_id, task_id, poll_interval=5.0
+                )
+            else:
+                status = result
+
+            if hasattr(status, "is_complete") and status.is_complete:
+                console.print("[green]Flashcards ready[/green]")
+            elif hasattr(status, "is_failed") and status.is_failed:
+                console.print(f"[red]Failed:[/red] {status.error}")
+            else:
+                console.print(f"[yellow]Started:[/yellow] {status}")
+
+    return _run()
 
 
 @generate.command("infographic")
@@ -2439,9 +2189,9 @@ def generate_flashcards(ctx, description, notebook_id, quantity, difficulty, wai
 @click.option(
     "--wait/--no-wait", default=False, help="Wait for completion (default: no-wait)"
 )
-@click.pass_context
+@with_client
 def generate_infographic(
-    ctx, description, notebook_id, orientation, detail, language, wait
+    ctx, description, notebook_id, orientation, detail, language, wait, client_auth
 ):
     """Generate infographic.
 
@@ -2450,60 +2200,53 @@ def generate_infographic(
       notebooklm generate infographic "include statistics and key findings"
       notebooklm generate infographic --orientation portrait --detail detailed
     """
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
+    orientation_map = {
+        "landscape": InfographicOrientation.LANDSCAPE,
+        "portrait": InfographicOrientation.PORTRAIT,
+        "square": InfographicOrientation.SQUARE,
+    }
+    detail_map = {
+        "concise": InfographicDetail.CONCISE,
+        "standard": InfographicDetail.STANDARD,
+        "detailed": InfographicDetail.DETAILED,
+    }
 
-        orientation_map = {
-            "landscape": InfographicOrientation.LANDSCAPE,
-            "portrait": InfographicOrientation.PORTRAIT,
-            "square": InfographicOrientation.SQUARE,
-        }
-        detail_map = {
-            "concise": InfographicDetail.CONCISE,
-            "standard": InfographicDetail.STANDARD,
-            "detailed": InfographicDetail.DETAILED,
-        }
-
-        async def _generate():
-            async with NotebookLMClient(auth) as client:
-                result = await client.artifacts.generate_infographic(
-                    nb_id,
-                    language=language,
-                    instructions=description or None,
-                    orientation=orientation_map[orientation],
-                    detail_level=detail_map[detail],
-                )
-
-                if not result:
-                    return None
-
-                task_id = result.get("artifact_id") or (
-                    result[0] if isinstance(result, list) else None
-                )
-                if wait and task_id:
-                    console.print(f"[yellow]Generating infographic...[/yellow]")
-                    return await client.artifacts.wait_for_completion(
-                        nb_id, task_id, poll_interval=5.0
-                    )
-                return result
-
-        status = run_async(_generate())
-
-        if not status:
-            console.print(
-                "[red]Infographic generation failed (Google may be rate limiting)[/red]"
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            result = await client.artifacts.generate_infographic(
+                nb_id,
+                language=language,
+                instructions=description or None,
+                orientation=orientation_map[orientation],
+                detail_level=detail_map[detail],
             )
-        elif hasattr(status, "is_complete") and status.is_complete:
-            console.print("[green]Infographic ready[/green]")
-        elif hasattr(status, "is_failed") and status.is_failed:
-            console.print(f"[red]Failed:[/red] {status.error}")
-        else:
-            console.print(f"[yellow]Started:[/yellow] {status}")
 
-    except Exception as e:
-        handle_error(e)
+            if not result:
+                console.print(
+                    "[red]Infographic generation failed (Google may be rate limiting)[/red]"
+                )
+                return
+
+            task_id = result.get("artifact_id") or (
+                result[0] if isinstance(result, list) else None
+            )
+            if wait and task_id:
+                console.print("[yellow]Generating infographic...[/yellow]")
+                status = await client.artifacts.wait_for_completion(
+                    nb_id, task_id, poll_interval=5.0
+                )
+            else:
+                status = result
+
+            if hasattr(status, "is_complete") and status.is_complete:
+                console.print("[green]Infographic ready[/green]")
+            elif hasattr(status, "is_failed") and status.is_failed:
+                console.print(f"[red]Failed:[/red] {status.error}")
+            else:
+                console.print(f"[yellow]Started:[/yellow] {status}")
+
+    return _run()
 
 
 @generate.command("data-table")
@@ -2519,8 +2262,8 @@ def generate_infographic(
 @click.option(
     "--wait/--no-wait", default=False, help="Wait for completion (default: no-wait)"
 )
-@click.pass_context
-def generate_data_table(ctx, description, notebook_id, language, wait):
+@with_client
+def generate_data_table(ctx, description, notebook_id, language, wait, client_auth):
     """Generate data table.
 
     \b
@@ -2528,45 +2271,39 @@ def generate_data_table(ctx, description, notebook_id, language, wait):
       notebooklm generate data-table "comparison of key concepts"
       notebooklm generate data-table "timeline of events"
     """
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _generate():
-            async with NotebookLMClient(auth) as client:
-                result = await client.artifacts.generate_data_table(
-                    nb_id, language=language, instructions=description
-                )
-
-                if not result:
-                    return None
-
-                task_id = result.get("artifact_id") or (
-                    result[0] if isinstance(result, list) else None
-                )
-                if wait and task_id:
-                    console.print(f"[yellow]Generating data table...[/yellow]")
-                    return await client.artifacts.wait_for_completion(
-                        nb_id, task_id, poll_interval=5.0
-                    )
-                return result
-
-        status = run_async(_generate())
-
-        if not status:
-            console.print(
-                "[red]Data table generation failed (Google may be rate limiting)[/red]"
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            result = await client.artifacts.generate_data_table(
+                nb_id, language=language, instructions=description
             )
-        elif hasattr(status, "is_complete") and status.is_complete:
-            console.print("[green]Data table ready[/green]")
-        elif hasattr(status, "is_failed") and status.is_failed:
-            console.print(f"[red]Failed:[/red] {status.error}")
-        else:
-            console.print(f"[yellow]Started:[/yellow] {status}")
 
-    except Exception as e:
-        handle_error(e)
+            if not result:
+                console.print(
+                    "[red]Data table generation failed (Google may be rate limiting)[/red]"
+                )
+                return
+
+            task_id = result.get("artifact_id") or (
+                result[0] if isinstance(result, list) else None
+            )
+            if wait and task_id:
+                console.print("[yellow]Generating data table...[/yellow]")
+                status = await client.artifacts.wait_for_completion(
+                    nb_id, task_id, poll_interval=5.0
+                )
+            else:
+                status = result
+
+            if hasattr(status, "is_complete") and status.is_complete:
+                console.print("[green]Data table ready[/green]")
+            elif hasattr(status, "is_failed") and status.is_failed:
+                console.print(f"[red]Failed:[/red] {status.error}")
+            else:
+                console.print(f"[yellow]Started:[/yellow] {status}")
+
+    return _run()
 
 
 @generate.command("mind-map")
@@ -2577,38 +2314,32 @@ def generate_data_table(ctx, description, notebook_id, language, wait):
     default=None,
     help="Notebook ID (uses current if not set)",
 )
-@click.pass_context
-def generate_mind_map(ctx, notebook_id):
+@with_client
+def generate_mind_map(ctx, notebook_id, client_auth):
     """Generate mind map."""
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _generate():
-            async with NotebookLMClient(auth) as client:
-                return await client.artifacts.generate_mind_map(nb_id)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            with console.status("Generating mind map..."):
+                result = await client.artifacts.generate_mind_map(nb_id)
 
-        with console.status("Generating mind map..."):
-            result = run_async(_generate())
-
-        if result:
-            console.print("[green]Mind map generated:[/green]")
-            if isinstance(result, dict):
-                console.print(f"  Note ID: {result.get('note_id', '-')}")
-                mind_map = result.get("mind_map", {})
-                if isinstance(mind_map, dict):
-                    console.print(f"  Root: {mind_map.get('name', '-')}")
-                    console.print(
-                        f"  Children: {len(mind_map.get('children', []))} nodes"
-                    )
+            if result:
+                console.print("[green]Mind map generated:[/green]")
+                if isinstance(result, dict):
+                    console.print(f"  Note ID: {result.get('note_id', '-')}")
+                    mind_map = result.get("mind_map", {})
+                    if isinstance(mind_map, dict):
+                        console.print(f"  Root: {mind_map.get('name', '-')}")
+                        console.print(
+                            f"  Children: {len(mind_map.get('children', []))} nodes"
+                        )
+                else:
+                    console.print(result)
             else:
-                console.print(result)
-        else:
-            console.print("[yellow]No result[/yellow]")
+                console.print("[yellow]No result[/yellow]")
 
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @generate.command("report")
@@ -2630,8 +2361,8 @@ def generate_mind_map(ctx, notebook_id):
 @click.option(
     "--wait/--no-wait", default=False, help="Wait for completion (default: no-wait)"
 )
-@click.pass_context
-def generate_report_cmd(ctx, description, report_format, notebook_id, wait):
+@with_client
+def generate_report_cmd(ctx, description, report_format, notebook_id, wait, client_auth):
     """Generate a report (briefing doc, study guide, blog post, or custom).
 
     \b
@@ -2642,77 +2373,67 @@ def generate_report_cmd(ctx, description, report_format, notebook_id, wait):
       notebooklm generate report "Create a white paper..."    # custom report
       notebooklm generate report --format blog-post "Focus on key insights"
     """
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        # Smart detection: if description provided without explicit format change, treat as custom
-        actual_format = report_format
-        custom_prompt = None
-        if description:
-            if report_format == "briefing-doc":
-                # User provided description but didn't change format -> custom
-                actual_format = "custom"
-                custom_prompt = description
-            else:
-                # User provided both format and description -> use as instructions
-                custom_prompt = description
-
-        # Map CLI format names to ReportFormat enum
-        format_map = {
-            "briefing-doc": ReportFormat.BRIEFING_DOC,
-            "study-guide": ReportFormat.STUDY_GUIDE,
-            "blog-post": ReportFormat.BLOG_POST,
-            "custom": ReportFormat.CUSTOM,
-        }
-        report_format_enum = format_map[actual_format]
-
-        # Display name for messages
-        format_display = {
-            "briefing-doc": "briefing document",
-            "study-guide": "study guide",
-            "blog-post": "blog post",
-            "custom": "custom report",
-        }[actual_format]
-
-        async def _generate():
-            async with NotebookLMClient(auth) as client:
-                result = await client.artifacts.generate_report(
-                    nb_id,
-                    report_format=report_format_enum,
-                    custom_prompt=custom_prompt,
-                )
-
-                if not result:
-                    return None
-
-                task_id = result.get("artifact_id")
-                if wait and task_id:
-                    console.print(f"[yellow]Generating {format_display}...[/yellow]")
-                    return await client.artifacts.wait_for_completion(
-                        nb_id, task_id, poll_interval=5.0
-                    )
-                return result
-
-        status = run_async(_generate())
-
-        if not status:
-            console.print(
-                f"[red]Report generation failed (Google may be rate limiting)[/red]"
-            )
-        elif hasattr(status, "is_complete") and status.is_complete:
-            console.print(f"[green]{format_display.title()} ready[/green]")
-        elif hasattr(status, "is_failed") and status.is_failed:
-            console.print(f"[red]Failed:[/red] {status.error}")
+    # Smart detection: if description provided without explicit format change, treat as custom
+    actual_format = report_format
+    custom_prompt = None
+    if description:
+        if report_format == "briefing-doc":
+            actual_format = "custom"
+            custom_prompt = description
         else:
-            artifact_id = (
-                status.get("artifact_id") if isinstance(status, dict) else None
-            )
-            console.print(f"[yellow]Started:[/yellow] {artifact_id or status}")
+            custom_prompt = description
 
-    except Exception as e:
-        handle_error(e)
+    format_map = {
+        "briefing-doc": ReportFormat.BRIEFING_DOC,
+        "study-guide": ReportFormat.STUDY_GUIDE,
+        "blog-post": ReportFormat.BLOG_POST,
+        "custom": ReportFormat.CUSTOM,
+    }
+    report_format_enum = format_map[actual_format]
+
+    format_display = {
+        "briefing-doc": "briefing document",
+        "study-guide": "study guide",
+        "blog-post": "blog post",
+        "custom": "custom report",
+    }[actual_format]
+
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            result = await client.artifacts.generate_report(
+                nb_id,
+                report_format=report_format_enum,
+                custom_prompt=custom_prompt,
+            )
+
+            if not result:
+                console.print(
+                    "[red]Report generation failed (Google may be rate limiting)[/red]"
+                )
+                return
+
+            task_id = result.get("artifact_id")
+            if wait and task_id:
+                console.print(f"[yellow]Generating {format_display}...[/yellow]")
+                status = await client.artifacts.wait_for_completion(
+                    nb_id, task_id, poll_interval=5.0
+                )
+            else:
+                status = result
+
+            if hasattr(status, "is_complete") and status.is_complete:
+                console.print(f"[green]{format_display.title()} ready[/green]")
+            elif hasattr(status, "is_failed") and status.is_failed:
+                console.print(f"[red]Failed:[/red] {status.error}")
+            else:
+                artifact_id = (
+                    status.get("artifact_id") if isinstance(status, dict) else None
+                )
+                console.print(f"[yellow]Started:[/yellow] {artifact_id or status}")
+
+    return _run()
 
 
 # =============================================================================
@@ -3496,41 +3217,35 @@ def _parse_note(n: list) -> tuple[str, str, str]:
     default=None,
     help="Notebook ID (uses current if not set)",
 )
-@click.pass_context
-def note_list(ctx, notebook_id):
+@with_client
+def note_list(ctx, notebook_id, client_auth):
     """List all notes in a notebook."""
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _list():
-            async with NotebookLMClient(auth) as client:
-                return await client.notes.list(nb_id)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            notes = await client.notes.list(nb_id)
 
-        notes = run_async(_list())
+            if not notes:
+                console.print("[yellow]No notes found[/yellow]")
+                return
 
-        if not notes:
-            console.print("[yellow]No notes found[/yellow]")
-            return
+            table = Table(title=f"Notes in {nb_id}")
+            table.add_column("ID", style="cyan")
+            table.add_column("Title", style="green")
+            table.add_column("Preview", style="dim", max_width=50)
 
-        table = Table(title=f"Notes in {nb_id}")
-        table.add_column("ID", style="cyan")
-        table.add_column("Title", style="green")
-        table.add_column("Preview", style="dim", max_width=50)
+            for n in notes:
+                if isinstance(n, list) and len(n) > 0:
+                    note_id, title, content = _parse_note(n)
+                    preview = content[:50]
+                    table.add_row(
+                        note_id, title, preview + "..." if len(content) > 50 else preview
+                    )
 
-        for n in notes:
-            if isinstance(n, list) and len(n) > 0:
-                note_id, title, content = _parse_note(n)
-                preview = content[:50]
-                table.add_row(
-                    note_id, title, preview + "..." if len(content) > 50 else preview
-                )
+            console.print(table)
 
-        console.print(table)
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @note.command("create")
@@ -3543,8 +3258,8 @@ def note_list(ctx, notebook_id):
     help="Notebook ID (uses current if not set)",
 )
 @click.option("-t", "--title", default="New Note", help="Note title")
-@click.pass_context
-def note_create(ctx, content, notebook_id, title):
+@with_client
+def note_create(ctx, content, notebook_id, title, client_auth):
     """Create a new note.
 
     \b
@@ -3553,25 +3268,19 @@ def note_create(ctx, content, notebook_id, title):
       notebooklm note create "My note content"     # Note with content
       notebooklm note create "Content" -t "Title"  # Note with title and content
     """
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _create():
-            async with NotebookLMClient(auth) as client:
-                return await client.notes.create(nb_id, title, content)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            result = await client.notes.create(nb_id, title, content)
 
-        result = run_async(_create())
+            if result:
+                console.print("[green]Note created[/green]")
+                console.print(result)
+            else:
+                console.print("[yellow]Creation may have failed[/yellow]")
 
-        if result:
-            console.print("[green]Note created[/green]")
-            console.print(result)
-        else:
-            console.print("[yellow]Creation may have failed[/yellow]")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @note.command("get")
@@ -3583,33 +3292,27 @@ def note_create(ctx, content, notebook_id, title):
     default=None,
     help="Notebook ID (uses current if not set)",
 )
-@click.pass_context
-def note_get(ctx, note_id, notebook_id):
+@with_client
+def note_get(ctx, note_id, notebook_id, client_auth):
     """Get note content."""
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _get():
-            async with NotebookLMClient(auth) as client:
-                return await client.notes.get(nb_id, note_id)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            n = await client.notes.get(nb_id, note_id)
 
-        n = run_async(_get())
-
-        if n:
-            if isinstance(n, list) and len(n) > 0:
-                nid, title, content = _parse_note(n)
-                console.print(f"[bold cyan]ID:[/bold cyan] {nid}")
-                console.print(f"[bold cyan]Title:[/bold cyan] {title}")
-                console.print(f"[bold cyan]Content:[/bold cyan]\n{content}")
+            if n:
+                if isinstance(n, list) and len(n) > 0:
+                    nid, title, content = _parse_note(n)
+                    console.print(f"[bold cyan]ID:[/bold cyan] {nid}")
+                    console.print(f"[bold cyan]Title:[/bold cyan] {title}")
+                    console.print(f"[bold cyan]Content:[/bold cyan]\n{content}")
+                else:
+                    console.print(n)
             else:
-                console.print(n)
-        else:
-            console.print("[yellow]Note not found[/yellow]")
+                console.print("[yellow]Note not found[/yellow]")
 
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @note.command("save")
@@ -3623,29 +3326,21 @@ def note_get(ctx, note_id, notebook_id):
 )
 @click.option("--title", help="New title")
 @click.option("--content", help="New content")
-@click.pass_context
-def note_save(ctx, note_id, notebook_id, title, content):
+@with_client
+def note_save(ctx, note_id, notebook_id, title, content, client_auth):
     """Update note content."""
     if not title and not content:
         console.print("[yellow]Provide --title and/or --content[/yellow]")
         return
 
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _save():
-            async with NotebookLMClient(auth) as client:
-                return await client.notes.update(
-                    nb_id, note_id, content=content, title=title
-                )
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            await client.notes.update(nb_id, note_id, content=content, title=title)
+            console.print(f"[green]Note updated:[/green] {note_id}")
 
-        run_async(_save())
-        console.print(f"[green]Note updated:[/green] {note_id}")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @note.command("rename")
@@ -3658,41 +3353,30 @@ def note_save(ctx, note_id, notebook_id, title, content):
     default=None,
     help="Notebook ID (uses current if not set)",
 )
-@click.pass_context
-def note_rename(ctx, note_id, new_title, notebook_id):
+@with_client
+def note_rename(ctx, note_id, new_title, notebook_id, client_auth):
     """Rename a note."""
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _rename():
-            async with NotebookLMClient(auth) as client:
-                # Get current note to preserve content
-                note = await client.notes.get(nb_id, note_id)
-                if not note:
-                    return None, "Note not found"
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            # Get current note to preserve content
+            note = await client.notes.get(nb_id, note_id)
+            if not note:
+                console.print("[yellow]Note not found[/yellow]")
+                return
 
-                # Extract content from note structure
-                content = ""
-                if len(note) > 1 and isinstance(note[1], list):
-                    inner = note[1]
-                    if len(inner) > 1 and isinstance(inner[1], str):
-                        content = inner[1]
+            # Extract content from note structure
+            content = ""
+            if len(note) > 1 and isinstance(note[1], list):
+                inner = note[1]
+                if len(inner) > 1 and isinstance(inner[1], str):
+                    content = inner[1]
 
-                await client.notes.update(
-                    nb_id, note_id, content=content, title=new_title
-                )
-                return True, None
-
-        result, error = run_async(_rename())
-        if error:
-            console.print(f"[yellow]{error}[/yellow]")
-        elif result:
+            await client.notes.update(nb_id, note_id, content=content, title=new_title)
             console.print(f"[green]Note renamed:[/green] {new_title}")
 
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 @note.command("delete")
@@ -3705,28 +3389,20 @@ def note_rename(ctx, note_id, new_title, notebook_id):
     help="Notebook ID (uses current if not set)",
 )
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
-@click.pass_context
-def note_delete(ctx, note_id, notebook_id, yes):
+@with_client
+def note_delete(ctx, note_id, notebook_id, yes, client_auth):
     """Delete a note."""
     if not yes and not click.confirm(f"Delete note {note_id}?"):
         return
 
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _delete():
-            async with NotebookLMClient(auth) as client:
-                await client.notes.delete(nb_id, note_id)
-                # If no exception was raised, delete succeeded
-                return True
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            await client.notes.delete(nb_id, note_id)
+            console.print(f"[green]Deleted note:[/green] {note_id}")
 
-        run_async(_delete())
-        console.print(f"[green]Deleted note:[/green] {note_id}")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 # =============================================================================
@@ -3743,29 +3419,23 @@ def note_delete(ctx, note_id, notebook_id, yes):
     help="Notebook ID (uses current if not set)",
 )
 @click.option("--public/--private", default=False, help="Make audio public or private")
-@click.pass_context
-def share_audio_cmd(ctx, notebook_id, public):
+@with_client
+def share_audio_cmd(ctx, notebook_id, public, client_auth):
     """Share or unshare audio overview."""
-    try:
-        nb_id = require_notebook(notebook_id)
-        cookies, csrf, session_id = get_client(ctx)
-        auth = AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    nb_id = require_notebook(notebook_id)
 
-        async def _share():
-            async with NotebookLMClient(auth) as client:
-                return await client.artifacts.share_audio(nb_id, public=public)
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            result = await client.artifacts.share_audio(nb_id, public=public)
 
-        result = run_async(_share())
+            if result:
+                status = "public" if public else "private"
+                console.print(f"[green]Audio is now {status}[/green]")
+                console.print(result)
+            else:
+                console.print("[yellow]Share returned no result[/yellow]")
 
-        if result:
-            status = "public" if public else "private"
-            console.print(f"[green]Audio is now {status}[/green]")
-            console.print(result)
-        else:
-            console.print("[yellow]Share returned no result[/yellow]")
-
-    except Exception as e:
-        handle_error(e)
+    return _run()
 
 
 # =============================================================================
