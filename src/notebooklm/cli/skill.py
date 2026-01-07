@@ -35,7 +35,7 @@ def get_skill_version(skill_path: Path) -> str | None:
     with open(skill_path) as f:
         content = f.read(500)  # Read first 500 chars
 
-    match = re.search(r'notebooklm-client v([\d.]+)', content)
+    match = re.search(r'notebooklm-py v([\d.]+)', content)
     return match.group(1) if match else None
 
 
@@ -67,7 +67,7 @@ def install():
 
     # Embed version in skill file (after frontmatter)
     version = get_package_version()
-    version_comment = f"<!-- notebooklm-client v{version} -->\n"
+    version_comment = f"<!-- notebooklm-py v{version} -->\n"
 
     # Insert after the closing --- of frontmatter
     if "---" in content:

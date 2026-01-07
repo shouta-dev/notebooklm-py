@@ -4,6 +4,7 @@ These tests require real authentication and interact with the live API.
 Run with: pytest tests/e2e/ -v -m e2e
 """
 
+import asyncio
 import pytest
 import httpx
 
@@ -152,6 +153,9 @@ class TestArtifactGeneration:
                 The future of AI holds both promise and challenges for society.
                 """,
             )
+
+            # Wait for source to be processed before generation
+            await asyncio.sleep(2.0)
 
             status = await client.artifacts.generate_audio(
                 notebook.id, instructions="Keep it brief and casual"

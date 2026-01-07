@@ -1,4 +1,4 @@
-# Contributing to notebooklm-client
+# Contributing to notebooklm-py
 
 ## For Human Contributors
 

@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Common issues, known limitations, and workarounds for `notebooklm-client`.
+Common issues, known limitations, and workarounds for `notebooklm-py`.
 
 ## Common Errors
 

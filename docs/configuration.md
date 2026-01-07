@@ -1,6 +1,6 @@
 # Configuration
 
-This guide covers storage locations, environment settings, and configuration options for `notebooklm-client`.
+This guide covers storage locations, environment settings, and configuration options for `notebooklm-py`.
 
 ## File Locations
 

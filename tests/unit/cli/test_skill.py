@@ -62,7 +62,7 @@ class TestSkillStatus:
         """Test status when skill is installed."""
         skill_dest = tmp_path / "skills" / "notebooklm" / "SKILL.md"
         skill_dest.parent.mkdir(parents=True)
-        skill_dest.write_text("<!-- notebooklm-client v0.1.0 -->\n# Test")
+        skill_dest.write_text("<!-- notebooklm-py v0.1.0 -->\n# Test")
 
         with patch("notebooklm.cli.skill.SKILL_DEST", skill_dest):
             result = runner.invoke(cli, ["skill", "status"])
@@ -132,7 +132,7 @@ class TestSkillVersionExtraction:
         from notebooklm.cli.skill import get_skill_version
 
         skill_file = tmp_path / "SKILL.md"
-        skill_file.write_text("---\nname: test\n---\n<!-- notebooklm-client v1.2.3 -->\n# Test")
+        skill_file.write_text("---\nname: test\n---\n<!-- notebooklm-py v1.2.3 -->\n# Test")
 
         version = get_skill_version(skill_file)
         assert version == "1.2.3"

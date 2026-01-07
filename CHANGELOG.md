@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-01-05
 
 ### Added
-- Initial release of `notebooklm-client` - unofficial Python client for Google NotebookLM
+- Initial release of `notebooklm-py` - unofficial Python client for Google NotebookLM
 - Full notebook CRUD operations (create, list, rename, delete)
 - Source management:
   - Add URL sources (with YouTube transcript support)
@@ -80,4 +80,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RPC method IDs may change without notice (reverse-engineered API)
 - Both quiz and flashcard use type 4 internally, distinguished by title
 
-[0.1.0]: https://github.com/teng-lin/notebooklm-client/releases/tag/v0.1.0
+[0.1.0]: https://github.com/teng-lin/notebooklm-py/releases/tag/v0.1.0

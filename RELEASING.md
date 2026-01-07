@@ -1,4 +1,4 @@
-# Releasing notebooklm-client
+# Releasing notebooklm-py
 
 ## Pre-Release Checklist
 
@@ -34,7 +34,7 @@
    hatch build
    hatch publish -r test
    ```
-2. Verify at https://test.pypi.org/project/notebooklm-client/
+2. Verify at https://test.pypi.org/project/notebooklm-py/
 3. Publish to PyPI:
    ```bash
    hatch publish

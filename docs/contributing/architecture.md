@@ -1,6 +1,6 @@
 # Architecture Guide
 
-Overview of the `notebooklm-client` codebase structure and design decisions.
+Overview of the `notebooklm-py` codebase structure and design decisions.
 
 ## Package Structure
 

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidelines for AI agents working on `notebooklm-client`.
+Guidelines for AI agents working on `notebooklm-py`.
 
 **IMPORTANT:** Follow documentation rules in [CONTRIBUTING.md](CONTRIBUTING.md) - especially the file creation and naming conventions.
 
