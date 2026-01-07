@@ -45,10 +45,30 @@ def create_mock_client():
 
     Returns a MagicMock configured as an async context manager
     that can be used with `async with NotebookLMClient(...) as client:`.
+
+    IMPORTANT: The mock has pre-created namespace objects (artifacts, sources,
+    notebooks, chat, research, notes) to match NotebookLMClient's structure.
+    Always use client.artifacts.method(), not client.method() directly.
+
+    Example:
+        mock_client = create_mock_client()
+        mock_client.artifacts.list = AsyncMock(return_value=[...])
+        mock_client.artifacts.download_audio = async_download_fn
     """
     mock_client = MagicMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    # Pre-create namespace mocks to match NotebookLMClient structure
+    # This ensures consistent attribute access (mock_client.artifacts is always
+    # the same object) and reminds developers to use the correct namespace
+    mock_client.notebooks = MagicMock()
+    mock_client.sources = MagicMock()
+    mock_client.artifacts = MagicMock()
+    mock_client.chat = MagicMock()
+    mock_client.research = MagicMock()
+    mock_client.notes = MagicMock()
+
     return mock_client
 
 

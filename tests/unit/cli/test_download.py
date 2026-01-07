@@ -45,13 +45,11 @@ class TestDownloadAudio:
                 Path(output_path).write_bytes(b"fake audio content")
                 return output_path
 
-            # Create artifacts mock with all needed methods
-            mock_artifacts = MagicMock()
-            mock_artifacts.list = AsyncMock(
+            # Set up artifacts namespace (pre-created by create_mock_client)
+            mock_client.artifacts.list = AsyncMock(
                 return_value=[["audio_123", "My Audio", 1, 1234567890, 3]]
             )
-            mock_artifacts.download_audio = mock_download_audio
-            mock_client.artifacts = mock_artifacts
+            mock_client.artifacts.download_audio = mock_download_audio
             mock_client_cls.return_value = mock_client
 
             with patch("notebooklm.cli.download.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
@@ -115,13 +113,11 @@ class TestDownloadVideo:
                 Path(output_path).write_bytes(b"fake video content")
                 return output_path
 
-            # Create artifacts mock with all needed methods
-            mock_artifacts = MagicMock()
-            mock_artifacts.list = AsyncMock(
+            # Set up artifacts namespace (pre-created by create_mock_client)
+            mock_client.artifacts.list = AsyncMock(
                 return_value=[["vid_1", "My Video", 3, 1234567890, 3]]
             )
-            mock_artifacts.download_video = mock_download_video
-            mock_client.artifacts = mock_artifacts
+            mock_client.artifacts.download_video = mock_download_video
             mock_client_cls.return_value = mock_client
 
             with patch("notebooklm.cli.download.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
@@ -152,13 +148,11 @@ class TestDownloadInfographic:
                 Path(output_path).write_bytes(b"fake image content")
                 return output_path
 
-            # Create artifacts mock with all needed methods
-            mock_artifacts = MagicMock()
-            mock_artifacts.list = AsyncMock(
+            # Set up artifacts namespace (pre-created by create_mock_client)
+            mock_client.artifacts.list = AsyncMock(
                 return_value=[["info_1", "My Infographic", 7, 1234567890, 3]]
             )
-            mock_artifacts.download_infographic = mock_download_infographic
-            mock_client.artifacts = mock_artifacts
+            mock_client.artifacts.download_infographic = mock_download_infographic
             mock_client_cls.return_value = mock_client
 
             with patch("notebooklm.cli.download.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
@@ -190,13 +184,11 @@ class TestDownloadSlideDeck:
                 (Path(output_path) / "slide_1.png").write_bytes(b"fake slide")
                 return output_path
 
-            # Create artifacts mock with all needed methods
-            mock_artifacts = MagicMock()
-            mock_artifacts.list = AsyncMock(
+            # Set up artifacts namespace (pre-created by create_mock_client)
+            mock_client.artifacts.list = AsyncMock(
                 return_value=[["slide_1", "My Slides", 8, 1234567890, 3]]
             )
-            mock_artifacts.download_slide_deck = mock_download_slide_deck
-            mock_client.artifacts = mock_artifacts
+            mock_client.artifacts.download_slide_deck = mock_download_slide_deck
             mock_client_cls.return_value = mock_client
 
             with patch("notebooklm.cli.download.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
@@ -227,16 +219,14 @@ class TestDownloadFlags:
                 Path(output_path).write_bytes(b"fake audio")
                 return output_path
 
-            # Create artifacts mock with all needed methods
-            mock_artifacts = MagicMock()
-            mock_artifacts.list = AsyncMock(
+            # Set up artifacts namespace (pre-created by create_mock_client)
+            mock_client.artifacts.list = AsyncMock(
                 return_value=[
                     ["audio_old", "Old Audio", 1, 1000000000, 3],
                     ["audio_new", "New Audio", 1, 2000000000, 3],
                 ]
             )
-            mock_artifacts.download_audio = mock_download_audio
-            mock_client.artifacts = mock_artifacts
+            mock_client.artifacts.download_audio = mock_download_audio
             mock_client_cls.return_value = mock_client
 
             with patch("notebooklm.cli.download.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
@@ -260,16 +250,14 @@ class TestDownloadFlags:
                 Path(output_path).write_bytes(b"fake audio")
                 return output_path
 
-            # Create artifacts mock with all needed methods
-            mock_artifacts = MagicMock()
-            mock_artifacts.list = AsyncMock(
+            # Set up artifacts namespace (pre-created by create_mock_client)
+            mock_client.artifacts.list = AsyncMock(
                 return_value=[
                     ["audio_old", "Old Audio", 1, 1000000000, 3],
                     ["audio_new", "New Audio", 1, 2000000000, 3],
                 ]
             )
-            mock_artifacts.download_audio = mock_download_audio
-            mock_client.artifacts = mock_artifacts
+            mock_client.artifacts.download_audio = mock_download_audio
             mock_client_cls.return_value = mock_client
 
             with patch("notebooklm.cli.download.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
@@ -294,13 +282,11 @@ class TestDownloadFlags:
                 Path(output_path).write_bytes(b"new content")
                 return output_path
 
-            # Create artifacts mock with all needed methods
-            mock_artifacts = MagicMock()
-            mock_artifacts.list = AsyncMock(
+            # Set up artifacts namespace (pre-created by create_mock_client)
+            mock_client.artifacts.list = AsyncMock(
                 return_value=[["audio_123", "Audio", 1, 1234567890, 3]]
             )
-            mock_artifacts.download_audio = mock_download_audio
-            mock_client.artifacts = mock_artifacts
+            mock_client.artifacts.download_audio = mock_download_audio
             mock_client_cls.return_value = mock_client
 
             with patch("notebooklm.cli.download.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
