@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from click.testing import CliRunner
 
 from notebooklm.notebooklm_cli import cli
-from notebooklm.types import Notebook, NotebookDescription, SuggestedTopic
+from notebooklm.types import Notebook, NotebookDescription, SuggestedTopic, AskResult
 
 from .conftest import create_mock_client, patch_main_cli_client, patch_client_for_module
 
@@ -452,11 +452,12 @@ class TestNotebookAsk:
         with patch_main_cli_client() as mock_client_cls:
             mock_client = create_mock_client()
             mock_client.chat.ask = AsyncMock(
-                return_value={
-                    "answer": "This is the answer to your question.",
-                    "conversation_id": "conv_123",
-                    "is_follow_up": False,
-                }
+                return_value=AskResult(
+                    answer="This is the answer to your question.",
+                    conversation_id="conv_123",
+                    is_follow_up=False,
+                    turn_number=1,
+                )
             )
             mock_client.chat.get_history = AsyncMock(return_value=None)
             mock_client_cls.return_value = mock_client
@@ -474,11 +475,12 @@ class TestNotebookAsk:
         with patch_main_cli_client() as mock_client_cls:
             mock_client = create_mock_client()
             mock_client.chat.ask = AsyncMock(
-                return_value={
-                    "answer": "Fresh answer",
-                    "conversation_id": "new_conv",
-                    "is_follow_up": False,
-                }
+                return_value=AskResult(
+                    answer="Fresh answer",
+                    conversation_id="new_conv",
+                    is_follow_up=False,
+                    turn_number=1,
+                )
             )
             mock_client_cls.return_value = mock_client
 
@@ -493,12 +495,12 @@ class TestNotebookAsk:
         with patch_main_cli_client() as mock_client_cls:
             mock_client = create_mock_client()
             mock_client.chat.ask = AsyncMock(
-                return_value={
-                    "answer": "Follow-up answer",
-                    "conversation_id": "conv_123",
-                    "is_follow_up": True,
-                    "turn_number": 2,
-                }
+                return_value=AskResult(
+                    answer="Follow-up answer",
+                    conversation_id="conv_123",
+                    is_follow_up=True,
+                    turn_number=2,
+                )
             )
             mock_client_cls.return_value = mock_client
 

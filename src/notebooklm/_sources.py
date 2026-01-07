@@ -485,17 +485,20 @@ class SourcesAPI:
             allow_null=True,
         )
 
-        # Parse SOURCE_ID from response
-        if result and isinstance(result, list) and len(result) > 0:
-            first_item = result[0]
-            if isinstance(first_item, list) and len(first_item) > 0:
-                source_info = first_item[0]
-                if isinstance(source_info, list) and len(source_info) > 0:
-                    source_id_wrapper = source_info[0]
-                    if isinstance(source_id_wrapper, list) and len(source_id_wrapper) > 0:
-                        source_id = source_id_wrapper[0]
-                        if isinstance(source_id, str):
-                            return source_id
+        # Parse SOURCE_ID from response - handle various nesting formats
+        # API returns different structures: [[[[id]]]], [[[id]]], [[id]], etc.
+        if result and isinstance(result, list):
+            def extract_id(data):
+                """Recursively extract first string from nested lists."""
+                if isinstance(data, str):
+                    return data
+                if isinstance(data, list) and len(data) > 0:
+                    return extract_id(data[0])
+                return None
+
+            source_id = extract_id(result)
+            if source_id:
+                return source_id
 
         raise ValueError("Failed to get SOURCE_ID from registration response")
 

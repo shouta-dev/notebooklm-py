@@ -131,12 +131,13 @@ class TestRegisterFileSource:
             await sources_api._register_file_source("nb_123", "test.pdf")
 
     @pytest.mark.asyncio
-    async def test_register_file_source_raises_on_malformed_response(self, sources_api, mock_core):
-        """Test that malformed response raises ValueError."""
-        mock_core.rpc_call.return_value = [[["not_nested_enough"]]]
+    async def test_register_file_source_extracts_id_from_nested_lists(self, sources_api, mock_core):
+        """Test that ID is extracted from arbitrarily nested lists."""
+        # The flexible parser should extract "source_id_123" from any nesting depth
+        mock_core.rpc_call.return_value = [[["source_id_123"]]]
 
-        with pytest.raises(ValueError, match="Failed to get SOURCE_ID"):
-            await sources_api._register_file_source("nb_123", "test.pdf")
+        result = await sources_api._register_file_source("nb_123", "test.pdf")
+        assert result == "source_id_123"
 
     @pytest.mark.asyncio
     async def test_register_file_source_raises_on_non_string_id(self, sources_api, mock_core):
