@@ -1,0 +1,349 @@
+"""Tests for session CLI commands (login, use, status, clear)."""
+
+import json
+import pytest
+from datetime import datetime
+from unittest.mock import AsyncMock, patch, MagicMock
+
+from click.testing import CliRunner
+
+from notebooklm.notebooklm_cli import cli
+from notebooklm.types import Notebook
+
+from .conftest import create_mock_client, patch_main_cli_client
+
+
+@pytest.fixture
+def runner():
+    return CliRunner()
+
+
+@pytest.fixture
+def mock_auth():
+    with patch("notebooklm.cli.helpers.load_auth_from_storage") as mock:
+        mock.return_value = {
+            "SID": "test",
+            "HSID": "test",
+            "SSID": "test",
+            "APISID": "test",
+            "SAPISID": "test",
+        }
+        yield mock
+
+
+@pytest.fixture
+def mock_context_file(tmp_path):
+    """Provide a temporary context file for testing context commands."""
+    context_file = tmp_path / "context.json"
+    with patch("notebooklm.cli.helpers.CONTEXT_FILE", context_file):
+        with patch("notebooklm.cli.session.CONTEXT_FILE", context_file):
+            yield context_file
+
+
+# =============================================================================
+# LOGIN COMMAND TESTS
+# =============================================================================
+
+
+class TestLoginCommand:
+    def test_login_playwright_import_error_handling(self, runner):
+        """Test that ImportError for playwright is handled gracefully."""
+        # Patch the import inside the login function to raise ImportError
+        with patch.dict("sys.modules", {"playwright": None, "playwright.sync_api": None}):
+            result = runner.invoke(cli, ["login"])
+
+            # Should exit with code 1 and show helpful message
+            assert result.exit_code == 1
+            assert "Playwright not installed" in result.output or "pip install" in result.output
+
+    def test_login_help_message(self, runner):
+        """Test login command shows help information."""
+        result = runner.invoke(cli, ["login", "--help"])
+
+        assert result.exit_code == 0
+        assert "Log in to NotebookLM" in result.output
+        assert "--storage" in result.output
+
+    def test_login_default_storage_path_info(self, runner):
+        """Test login command help shows default storage path."""
+        result = runner.invoke(cli, ["login", "--help"])
+
+        assert result.exit_code == 0
+        assert "storage_state.json" in result.output or "storage" in result.output.lower()
+
+
+# =============================================================================
+# USE COMMAND TESTS
+# =============================================================================
+
+
+class TestUseCommand:
+    def test_use_sets_notebook_context(self, runner, mock_auth, mock_context_file):
+        """Test 'use' command sets the current notebook context."""
+        with patch_main_cli_client() as mock_client_cls:
+            mock_client = create_mock_client()
+            mock_client.notebooks.get = AsyncMock(
+                return_value=Notebook(
+                    id="nb_123",
+                    title="Test Notebook",
+                    created_at=datetime(2024, 1, 15),
+                    is_owner=True,
+                )
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch(
+                "notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock
+            ) as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+
+                # Patch in session module where it's imported
+                with patch(
+                    "notebooklm.cli.session.resolve_notebook_id", new_callable=AsyncMock
+                ) as mock_resolve:
+                    mock_resolve.return_value = "nb_123"
+
+                    result = runner.invoke(cli, ["use", "nb_123"])
+
+        assert result.exit_code == 0
+        assert "nb_123" in result.output or "Test Notebook" in result.output
+
+    def test_use_with_partial_id(self, runner, mock_auth, mock_context_file):
+        """Test 'use' command resolves partial notebook ID."""
+        with patch_main_cli_client() as mock_client_cls:
+            mock_client = create_mock_client()
+            mock_client.notebooks.get = AsyncMock(
+                return_value=Notebook(
+                    id="nb_full_id_123",
+                    title="Resolved Notebook",
+                    created_at=datetime(2024, 1, 15),
+                    is_owner=True,
+                )
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch(
+                "notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock
+            ) as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+
+                # Patch in session module where it's imported
+                with patch(
+                    "notebooklm.cli.session.resolve_notebook_id", new_callable=AsyncMock
+                ) as mock_resolve:
+                    mock_resolve.return_value = "nb_full_id_123"
+
+                    result = runner.invoke(cli, ["use", "nb_full"])
+
+        assert result.exit_code == 0
+        # Should show resolved full ID
+        assert "nb_full_id_123" in result.output or "Resolved Notebook" in result.output
+
+    def test_use_without_auth_sets_id_anyway(self, runner, mock_context_file):
+        """Test 'use' command sets ID even without auth file."""
+        with patch(
+            "notebooklm.cli.helpers.load_auth_from_storage",
+            side_effect=FileNotFoundError("No auth"),
+        ):
+            result = runner.invoke(cli, ["use", "nb_noauth"])
+
+        # Should still set the context (with warning)
+        assert result.exit_code == 0
+        assert "nb_noauth" in result.output
+
+    def test_use_shows_owner_status(self, runner, mock_auth, mock_context_file):
+        """Test 'use' command displays ownership status correctly."""
+        with patch_main_cli_client() as mock_client_cls:
+            mock_client = create_mock_client()
+            mock_client.notebooks.get = AsyncMock(
+                return_value=Notebook(
+                    id="nb_shared",
+                    title="Shared Notebook",
+                    created_at=datetime(2024, 1, 15),
+                    is_owner=False,  # Shared notebook
+                )
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch(
+                "notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock
+            ) as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+
+                # Patch in session module where it's imported
+                with patch(
+                    "notebooklm.cli.session.resolve_notebook_id", new_callable=AsyncMock
+                ) as mock_resolve:
+                    mock_resolve.return_value = "nb_shared"
+
+                    result = runner.invoke(cli, ["use", "nb_shared"])
+
+        assert result.exit_code == 0
+        assert "Shared" in result.output or "nb_shared" in result.output
+
+
+# =============================================================================
+# STATUS COMMAND TESTS
+# =============================================================================
+
+
+class TestStatusCommand:
+    def test_status_no_context(self, runner, mock_context_file):
+        """Test status command when no notebook is selected."""
+        # Ensure context file doesn't exist
+        if mock_context_file.exists():
+            mock_context_file.unlink()
+
+        result = runner.invoke(cli, ["status"])
+
+        assert result.exit_code == 0
+        assert "No notebook selected" in result.output or "use" in result.output.lower()
+
+    def test_status_with_context(self, runner, mock_context_file):
+        """Test status command shows current notebook context."""
+        # Create context file with notebook info
+        context_data = {
+            "notebook_id": "nb_test_123",
+            "title": "My Test Notebook",
+            "is_owner": True,
+            "created_at": "2024-01-15",
+        }
+        mock_context_file.write_text(json.dumps(context_data))
+
+        result = runner.invoke(cli, ["status"])
+
+        assert result.exit_code == 0
+        assert "nb_test_123" in result.output or "My Test Notebook" in result.output
+
+    def test_status_with_conversation(self, runner, mock_context_file):
+        """Test status command shows conversation ID when set."""
+        context_data = {
+            "notebook_id": "nb_conv_test",
+            "title": "Notebook with Conversation",
+            "is_owner": True,
+            "created_at": "2024-01-15",
+            "conversation_id": "conv_abc123",
+        }
+        mock_context_file.write_text(json.dumps(context_data))
+
+        result = runner.invoke(cli, ["status"])
+
+        assert result.exit_code == 0
+        assert "conv_abc123" in result.output or "Conversation" in result.output
+
+    def test_status_json_output_with_context(self, runner, mock_context_file):
+        """Test status --json outputs valid JSON."""
+        context_data = {
+            "notebook_id": "nb_json_test",
+            "title": "JSON Test Notebook",
+            "is_owner": True,
+            "created_at": "2024-01-15",
+        }
+        mock_context_file.write_text(json.dumps(context_data))
+
+        result = runner.invoke(cli, ["status", "--json"])
+
+        assert result.exit_code == 0
+        # Should be valid JSON
+        output_data = json.loads(result.output)
+        assert output_data["has_context"] is True
+        assert output_data["notebook"]["id"] == "nb_json_test"
+
+    def test_status_json_output_no_context(self, runner, mock_context_file):
+        """Test status --json outputs valid JSON when no context."""
+        if mock_context_file.exists():
+            mock_context_file.unlink()
+
+        result = runner.invoke(cli, ["status", "--json"])
+
+        assert result.exit_code == 0
+        output_data = json.loads(result.output)
+        assert output_data["has_context"] is False
+        assert output_data["notebook"] is None
+
+    def test_status_handles_corrupted_context_file(self, runner, mock_context_file):
+        """Test status handles corrupted context file gracefully."""
+        # Write invalid JSON
+        mock_context_file.write_text("{ invalid json }")
+
+        result = runner.invoke(cli, ["status"])
+
+        # Should not crash, should show minimal info or no context
+        assert result.exit_code == 0
+
+
+# =============================================================================
+# CLEAR COMMAND TESTS
+# =============================================================================
+
+
+class TestClearCommand:
+    def test_clear_removes_context(self, runner, mock_context_file):
+        """Test clear command removes context file."""
+        # Create context file
+        context_data = {"notebook_id": "nb_to_clear", "title": "Clear Me"}
+        mock_context_file.write_text(json.dumps(context_data))
+
+        result = runner.invoke(cli, ["clear"])
+
+        assert result.exit_code == 0
+        assert "cleared" in result.output.lower() or "Context" in result.output
+
+    def test_clear_when_no_context(self, runner, mock_context_file):
+        """Test clear command when no context exists."""
+        if mock_context_file.exists():
+            mock_context_file.unlink()
+
+        result = runner.invoke(cli, ["clear"])
+
+        # Should succeed even if no context exists
+        assert result.exit_code == 0
+
+
+# =============================================================================
+# EDGE CASES
+# =============================================================================
+
+
+class TestSessionEdgeCases:
+    def test_use_handles_api_error_gracefully(self, runner, mock_auth, mock_context_file):
+        """Test 'use' command handles API errors gracefully."""
+        with patch_main_cli_client() as mock_client_cls:
+            mock_client = create_mock_client()
+            mock_client.notebooks.get = AsyncMock(
+                side_effect=Exception("API Error: Rate limited")
+            )
+            mock_client_cls.return_value = mock_client
+
+            with patch(
+                "notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock
+            ) as mock_fetch:
+                mock_fetch.return_value = ("csrf", "session")
+
+                # Patch in session module where it's imported
+                with patch(
+                    "notebooklm.cli.session.resolve_notebook_id", new_callable=AsyncMock
+                ) as mock_resolve:
+                    mock_resolve.return_value = "nb_error"
+
+                    result = runner.invoke(cli, ["use", "nb_error"])
+
+        # Should still set context with warning, not crash
+        assert result.exit_code == 0
+        # Error message should be shown
+        assert "Warning" in result.output or "Error" in result.output or "nb_error" in result.output
+
+    def test_status_shows_shared_notebook_correctly(self, runner, mock_context_file):
+        """Test status correctly shows shared (non-owner) notebooks."""
+        context_data = {
+            "notebook_id": "nb_shared",
+            "title": "Shared With Me",
+            "is_owner": False,
+            "created_at": "2024-01-15",
+        }
+        mock_context_file.write_text(json.dumps(context_data))
+
+        result = runner.invoke(cli, ["status"])
+
+        assert result.exit_code == 0
+        assert "Shared" in result.output or "nb_shared" in result.output

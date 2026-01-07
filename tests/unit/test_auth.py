@@ -353,3 +353,69 @@ class TestAuthTokensFromStorage:
         """Test raises error when storage file doesn't exist."""
         with pytest.raises(FileNotFoundError):
             await AuthTokens.from_storage(tmp_path / "nonexistent.json")
+
+
+# =============================================================================
+# BROWSER DOWNLOAD FUNCTIONS TESTS
+# =============================================================================
+
+
+class TestDownloadUrlsWithBrowser:
+    """Test download_urls_with_browser function."""
+
+    @pytest.mark.asyncio
+    async def test_download_urls_empty_list(self):
+        """Test returns empty list when given empty input."""
+        from notebooklm.auth import download_urls_with_browser
+
+        result = await download_urls_with_browser([])
+        assert result == []
+
+
+class TestBrowserProfileDir:
+    """Test browser profile directory constant."""
+
+    def test_browser_profile_dir_exists(self):
+        """Test BROWSER_PROFILE_DIR constant is defined."""
+        from notebooklm.auth import BROWSER_PROFILE_DIR
+        from pathlib import Path
+
+        assert BROWSER_PROFILE_DIR is not None
+        assert isinstance(BROWSER_PROFILE_DIR, Path)
+        assert ".notebooklm" in str(BROWSER_PROFILE_DIR)
+        assert "browser_profile" in str(BROWSER_PROFILE_DIR)
+
+
+class TestDefaultStoragePath:
+    """Test default storage path constant."""
+
+    def test_default_storage_path_is_correct(self):
+        """Test DEFAULT_STORAGE_PATH constant is defined correctly."""
+        from notebooklm.auth import DEFAULT_STORAGE_PATH
+        from pathlib import Path
+
+        assert DEFAULT_STORAGE_PATH is not None
+        assert isinstance(DEFAULT_STORAGE_PATH, Path)
+        assert ".notebooklm" in str(DEFAULT_STORAGE_PATH)
+        assert "storage_state.json" in str(DEFAULT_STORAGE_PATH)
+
+
+class TestMinimumRequiredCookies:
+    """Test minimum required cookies constant."""
+
+    def test_minimum_required_cookies_contains_sid(self):
+        """Test MINIMUM_REQUIRED_COOKIES contains SID."""
+        from notebooklm.auth import MINIMUM_REQUIRED_COOKIES
+
+        assert "SID" in MINIMUM_REQUIRED_COOKIES
+
+
+class TestAllowedCookieDomains:
+    """Test allowed cookie domains constant."""
+
+    def test_allowed_cookie_domains(self):
+        """Test ALLOWED_COOKIE_DOMAINS contains expected domains."""
+        from notebooklm.auth import ALLOWED_COOKIE_DOMAINS
+
+        assert ".google.com" in ALLOWED_COOKIE_DOMAINS
+        assert "notebooklm.google.com" in ALLOWED_COOKIE_DOMAINS
