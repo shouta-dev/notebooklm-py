@@ -18,6 +18,14 @@ notebooklm list           # Verify authentication works
 
 If commands fail with authentication errors, re-run `notebooklm login`.
 
+## Agent Setup Verification
+
+Before starting workflows, verify the CLI is ready:
+
+1. `notebooklm status` → Should show "Authenticated as: email@..."
+2. `notebooklm list --json` → Should return valid JSON (even if empty notebooks list)
+3. If either fails → Run `notebooklm login`
+
 ## When This Skill Activates
 
 **Explicit:** User says "/notebooklm", "use notebooklm", or mentions the tool by name
@@ -81,7 +89,31 @@ If commands fail with authentication errors, re-run `notebooklm login`.
 | Download video | `notebooklm download video ./output.mp4` |
 | Delete notebook | `notebooklm notebook delete <id>` |
 
-**Partial IDs:** Use short IDs (first 6-8 chars) instead of full UUIDs. Example: `notebooklm use abc123` matches `abc123de-1234-...`
+**Partial IDs:** Use first 6+ characters of UUIDs. Must be unique prefix (fails if ambiguous). Works for: `use`, `delete`, `wait` commands.
+
+## Command Output Formats
+
+Commands with `--json` return structured data for parsing:
+
+**Create notebook:**
+```
+$ notebooklm create "Research" --json
+{"id": "abc123de-...", "title": "Research"}
+```
+
+**Add source:**
+```
+$ notebooklm source add "https://example.com" --json
+{"source_id": "def456...", "title": "Example", "status": "PROCESSING"}
+```
+
+**Generate artifact:**
+```
+$ notebooklm generate audio "Focus on key points" --json
+{"artifact_id": "xyz789...", "status": "PENDING", "type": "AUDIO_OVERVIEW"}
+```
+
+**Extract IDs:** Parse the `id`, `source_id`, or `artifact_id` field from JSON output.
 
 ## Generation Types
 
@@ -102,12 +134,13 @@ If commands fail with authentication errors, re-run `notebooklm login`.
 ### Research to Podcast (Interactive)
 **Time:** 5-10 minutes total
 
-1. `notebooklm create "Research: [topic]"`
-2. `notebooklm source add` for each URL/document
-3. `notebooklm generate audio "Focus on [specific angle]"` (confirm when asked)
-4. Note the artifact ID returned
-5. Check `notebooklm artifact list` later for status
-6. `notebooklm download audio ./podcast.mp3` when complete (confirm when asked)
+1. `notebooklm create "Research: [topic]"` — *if fails: check auth with `notebooklm login`*
+2. `notebooklm source add` for each URL/document — *if one fails: log warning, continue with others*
+3. Wait for sources: `notebooklm source list --json` until all status=READY — *required before generation*
+4. `notebooklm generate audio "Focus on [specific angle]"` (confirm when asked) — *if rate limited: wait 5 min, retry once*
+5. Note the artifact ID returned
+6. Check `notebooklm artifact list` later for status
+7. `notebooklm download audio ./podcast.mp3` when complete (confirm when asked)
 
 ### Research to Podcast (Automated with Subagent)
 **Time:** 5-10 minutes, but continues in background
@@ -115,14 +148,22 @@ If commands fail with authentication errors, re-run `notebooklm login`.
 When user wants full automation (generate and download when ready):
 
 1. Create notebook and add sources as usual
-2. Run `notebooklm generate audio "..."` → returns artifact_id
-3. **Spawn a subagent** to wait and download:
-   ```bash
-   # Subagent runs:
-   notebooklm artifact wait <artifact_id> --timeout 600
-   notebooklm download audio ./podcast.mp3 -a <artifact_id>
+2. Wait for sources to be ready (use `source wait` or check `source list --json`)
+3. Run `notebooklm generate audio "..." --json` → parse `artifact_id` from output
+4. **Spawn a background agent** using Task tool:
    ```
-4. Main conversation can continue while subagent waits
+   Task(
+     prompt="Wait for artifact {artifact_id} to complete, then download to ./podcast.mp3.
+             Use: notebooklm artifact wait {artifact_id} --timeout 600
+             Then: notebooklm download audio ./podcast.mp3 -a {artifact_id}",
+     subagent_type="general-purpose"
+   )
+   ```
+5. Main conversation continues while agent waits
+
+**Error handling in subagent:**
+- If `artifact wait` returns exit code 2 (timeout): Report timeout, suggest checking `artifact list`
+- If download fails: Check if artifact status is COMPLETED first
 
 **Benefits:** Non-blocking, user can do other work, automatic download on completion
 
@@ -155,44 +196,46 @@ When user wants full automation (generate and download when ready):
 
 When adding multiple sources and needing to wait for processing before chat/generation:
 
-1. Add sources (returns immediately with source IDs):
+1. Add sources with `--json` to capture IDs:
    ```bash
-   notebooklm source add "https://url1.com"  # → source_id_1
-   notebooklm source add "https://url2.com"  # → source_id_2
+   notebooklm source add "https://url1.com" --json  # → {"source_id": "abc..."}
+   notebooklm source add "https://url2.com" --json  # → {"source_id": "def..."}
    ```
-2. **Spawn a subagent** to wait for sources to be ready:
-   ```bash
-   # Subagent runs:
-   notebooklm source wait <source_id_1> --timeout 120 --json
-   notebooklm source wait <source_id_2> --timeout 120 --json
+2. **Spawn a background agent** to wait for all sources:
    ```
-3. Main conversation can continue while subagent waits
+   Task(
+     prompt="Wait for sources {source_ids} to be ready.
+             For each: notebooklm source wait {id} --timeout 120
+             Report when all ready or if any fail.",
+     subagent_type="general-purpose"
+   )
+   ```
+3. Main conversation continues while agent waits
 4. Once sources are ready, proceed with chat or generation
 
-**Exit codes for source wait:**
-- `0` - Source is ready
-- `1` - Source not found or processing failed
-- `2` - Timeout reached
-
-**Why use source wait?** Sources need to be processed (indexed) before they can be used for chat or artifact generation. This typically takes 10-60 seconds depending on source size.
+**Why wait for sources?** Sources must be indexed before chat or generation. Takes 10-60 seconds per source.
 
 ### Deep Web Research (Subagent Pattern)
 **Time:** 2-5 minutes, runs in background
 
-Deep research finds and analyzes web sources on a topic. Use non-blocking mode with a subagent:
+Deep research finds and analyzes web sources on a topic:
 
 1. Create notebook: `notebooklm create "Research: [topic]"`
 2. Start deep research (non-blocking):
    ```bash
    notebooklm source add-research "topic query" --mode deep --no-wait
    ```
-3. **Spawn a subagent** to wait and import:
-   ```bash
-   # Subagent runs:
-   notebooklm research wait --import-all --timeout 300
+3. **Spawn a background agent** to wait and import:
    ```
-4. Main conversation continues while subagent waits
-5. When subagent completes, sources are imported automatically
+   Task(
+     prompt="Wait for research to complete and import sources.
+             Use: notebooklm research wait --import-all --timeout 300
+             Report how many sources were imported.",
+     subagent_type="general-purpose"
+   )
+   ```
+4. Main conversation continues while agent waits
+5. When agent completes, sources are imported automatically
 
 **Alternative (blocking):** For simple cases, omit `--no-wait`:
 ```bash
@@ -200,9 +243,9 @@ notebooklm source add-research "topic" --mode deep --import-all
 # Blocks for up to 5 minutes
 ```
 
-**Research modes:**
-- `--mode fast`: Quick search, returns in seconds (default)
-- `--mode deep`: Thorough analysis, takes 2-5 minutes
+**When to use each mode:**
+- `--mode fast`: Specific topic, quick overview needed (5-10 sources, seconds)
+- `--mode deep`: Broad topic, comprehensive analysis needed (20+ sources, 2-5 min)
 
 **Research sources:**
 - `--from web`: Search the web (default)
@@ -227,6 +270,27 @@ notebooklm source list --json
 notebooklm artifact list --json
 ```
 
+**JSON schemas (key fields):**
+
+`notebooklm list --json`:
+```json
+{"notebooks": [{"id": "...", "title": "...", "created_at": "..."}]}
+```
+
+`notebooklm source list --json`:
+```json
+{"sources": [{"id": "...", "title": "...", "status": "READY|PROCESSING|FAILED"}]}
+```
+
+`notebooklm artifact list --json`:
+```json
+{"artifacts": [{"id": "...", "title": "...", "type": "AUDIO_OVERVIEW", "status": "COMPLETED|PENDING|FAILED"}]}
+```
+
+**Status values:**
+- Sources: `PROCESSING` → `READY` (or `FAILED`)
+- Artifacts: `PENDING` → `COMPLETED` (or `FAILED`)
+
 ## Error Handling
 
 **On failure, offer the user a choice:**
@@ -245,6 +309,21 @@ notebooklm artifact list --json
 | Download fails | Generation incomplete | Check `artifact list` for status |
 | Invalid notebook/source ID | Wrong ID | Run `notebooklm list` to verify |
 | RPC protocol error | Google changed APIs | May need CLI update |
+
+## Exit Codes
+
+All commands use consistent exit codes:
+
+| Code | Meaning | Action |
+|------|---------|--------|
+| 0 | Success | Continue |
+| 1 | Error (not found, processing failed) | Check stderr, see Error Handling |
+| 2 | Timeout (wait commands only) | Extend timeout or check status manually |
+
+**Examples:**
+- `source wait` returns 1 if source not found or processing failed
+- `artifact wait` returns 2 if timeout reached before completion
+- `generate` returns 1 if rate limited (check stderr for details)
 
 ## Known Limitations
 
