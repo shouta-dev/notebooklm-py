@@ -64,7 +64,7 @@ Or set the environment variable directly:
 export NOTEBOOKLM_READ_ONLY_NOTEBOOK_ID="your-notebook-id-here"
 ```
 
-**Note:** The generation notebook is auto-created on first run and stored in `~/.notebooklm/generation_notebook_id`. You don't need to configure it manually.
+**Note:** The generation notebook is auto-created on first run and stored in `NOTEBOOKLM_HOME/generation_notebook_id` (default: `~/.notebooklm/generation_notebook_id`). You don't need to configure it manually.
 
 ### 4. Verify Setup
 

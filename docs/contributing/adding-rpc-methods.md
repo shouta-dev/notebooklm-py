@@ -257,9 +257,13 @@ async def test_new_feature(mock_client):
 ```python
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_new_feature_e2e(client, test_notebook_id):
+async def test_new_feature_e2e(client, read_only_notebook_id):
     """Test new feature against real API."""
-    result = await client.some_api.new_feature(test_notebook_id, "param")
+    # Use read_only_notebook_id for read-only tests
+    # Use temp_notebook for CRUD tests
+    # Use generation_notebook_id for artifact generation tests
+    # See docs/contributing/testing.md for fixture guidance
+    result = await client.some_api.new_feature(read_only_notebook_id, "param")
     assert result is not None
 ```
 
