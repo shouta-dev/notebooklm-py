@@ -265,16 +265,43 @@ async def _create_generation_notebook(client: NotebookLMClient) -> str:
     notebook = await client.notebooks.create(f"E2E-Generation-{uuid4().hex[:8]}")
 
     # Add a text source so the notebook has content for operations
+    # Content must be substantial enough for all artifact types including infographics
     await client.sources.add_text(
         notebook.id,
-        title="Test Content",
+        title="Machine Learning Fundamentals",
         content=(
-            "This is comprehensive test content for E2E testing. "
-            "It covers various topics including artificial intelligence, "
-            "machine learning, data science, and software engineering. "
-            "The content is designed to be substantial enough for "
-            "generating artifacts like audio overviews, quizzes, "
-            "flashcards, reports, and other NotebookLM features."
+            "# Introduction to Machine Learning\n\n"
+            "Machine learning is a subset of artificial intelligence that enables "
+            "systems to learn and improve from experience without being explicitly programmed.\n\n"
+            "## Key Concepts\n\n"
+            "### Supervised Learning\n"
+            "Uses labeled data to train models. Common algorithms include:\n"
+            "- Linear Regression: Predicts continuous values\n"
+            "- Decision Trees: Makes decisions based on feature values\n"
+            "- Neural Networks: Mimics human brain structure\n\n"
+            "### Unsupervised Learning\n"
+            "Finds patterns in unlabeled data. Examples:\n"
+            "- Clustering: Groups similar data points (K-means, DBSCAN)\n"
+            "- Dimensionality Reduction: Reduces feature space (PCA, t-SNE)\n\n"
+            "### Reinforcement Learning\n"
+            "Agents learn through trial and error with rewards and penalties.\n\n"
+            "## Applications\n\n"
+            "| Domain | Use Case | Impact |\n"
+            "|--------|----------|--------|\n"
+            "| Healthcare | Disease diagnosis | 95% accuracy in some cancers |\n"
+            "| Finance | Fraud detection | $20B saved annually |\n"
+            "| Transportation | Autonomous vehicles | 40% fewer accidents |\n"
+            "| Retail | Recommendation systems | 35% increase in sales |\n\n"
+            "## Model Evaluation Metrics\n\n"
+            "1. **Accuracy**: Correct predictions / Total predictions\n"
+            "2. **Precision**: True positives / (True positives + False positives)\n"
+            "3. **Recall**: True positives / (True positives + False negatives)\n"
+            "4. **F1 Score**: Harmonic mean of precision and recall\n\n"
+            "## Best Practices\n\n"
+            "- Always split data into training, validation, and test sets\n"
+            "- Use cross-validation to avoid overfitting\n"
+            "- Normalize features for better model performance\n"
+            "- Monitor for data drift in production systems\n"
         ),
     )
 
