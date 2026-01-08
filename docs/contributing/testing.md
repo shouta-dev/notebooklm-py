@@ -23,7 +23,7 @@ pip install -e ".[dev]"
 notebooklm login
 ```
 
-This opens a browser, logs into your Google account, and stores cookies in `~/.notebooklm/storage.json`.
+This opens a browser, logs into your Google account, and stores cookies in `~/.notebooklm/storage_state.json`.
 
 Verify with:
 ```bash
@@ -238,7 +238,7 @@ From `tests/e2e/conftest.py`:
 ```python
 @pytest.fixture(scope="session")
 def auth_cookies() -> dict[str, str]:
-    """Load cookies from ~/.notebooklm/storage.json"""
+    """Load cookies from ~/.notebooklm/storage_state.json"""
 
 @pytest.fixture(scope="session")
 def auth_tokens(auth_cookies) -> AuthTokens:

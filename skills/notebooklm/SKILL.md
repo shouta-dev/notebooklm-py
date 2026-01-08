@@ -18,6 +18,19 @@ notebooklm list           # Verify authentication works
 
 If commands fail with authentication errors, re-run `notebooklm login`.
 
+### CI/CD and Multiple Accounts
+
+For automated environments or multiple accounts, use environment variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `NOTEBOOKLM_HOME` | Custom config directory (default: `~/.notebooklm`) |
+| `NOTEBOOKLM_AUTH_JSON` | Inline auth JSON - no file writes needed |
+
+**CI/CD setup:** Set `NOTEBOOKLM_AUTH_JSON` from a secret containing your `storage_state.json` contents.
+
+**Multiple accounts:** Use different `NOTEBOOKLM_HOME` directories per account.
+
 ## Agent Setup Verification
 
 Before starting workflows, verify the CLI is ready:

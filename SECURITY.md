@@ -21,11 +21,13 @@ This library stores authentication credentials locally. Please understand these 
 
 ### Storage Locations
 
+Default location is `~/.notebooklm/` (can be changed via `NOTEBOOKLM_HOME` environment variable):
+
 | File | Contents | Permissions |
 |------|----------|-------------|
-| `~/.notebooklm/storage_state.json` | Google session cookies | `0o600` (owner-only) |
-| `~/.notebooklm/browser_profile/` | Chromium profile data | `0o700` (owner-only) |
-| `~/.notebooklm/context.json` | Active notebook ID | Default |
+| `storage_state.json` | Google session cookies | `0o600` (owner-only) |
+| `browser_profile/` | Chromium profile data | `0o700` (owner-only) |
+| `context.json` | Active notebook ID | Default |
 
 ### Security Best Practices
 
@@ -50,8 +52,9 @@ This library stores authentication credentials locally. Please understand these 
 
 5. **CI/CD usage**
    - Do not commit credentials to repositories
-   - Use secure secret management for automation
-   - Consider using service accounts where possible
+   - Use `NOTEBOOKLM_AUTH_JSON` environment variable for secure, file-free authentication
+   - Store the JSON value in GitHub Secrets or similar secure secret management
+   - The env var approach keeps credentials in memory only, never written to disk
 
 ### What This Library Does NOT Do
 
