@@ -40,9 +40,17 @@ notebooklm status
    - At least one text/paste source
    - At least one URL source
    - Optionally: PDF, YouTube video
-4. Generate some artifacts:
-   - At least one audio overview
-   - At least one quiz or flashcard set
+4. **Generate artifacts** (at least one of each type for full test coverage):
+   - Audio overview (try different formats: Deep Dive, Brief)
+   - Video overview
+   - Quiz
+   - Flashcards
+   - Infographic
+   - Slide deck
+   - Report (Briefing Doc, Study Guide, or Blog Post)
+
+   *Tip: Generate multiple artifacts of the same type with different customizations to test download selection.*
+
 5. Copy the notebook ID from the URL: `notebooklm.google.com/notebook/YOUR_NOTEBOOK_ID`
 6. Create your `.env` file:
 
