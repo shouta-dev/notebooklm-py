@@ -1315,8 +1315,46 @@ class ArtifactsAPI:
     # Share Operations
     # =========================================================================
 
+    async def share(
+        self,
+        notebook_id: str,
+        artifact_id: Optional[str] = None,
+        public: bool = False,
+    ) -> Any:
+        """Share an artifact.
+
+        Shareable artifacts include: Audio, Video, Reports, Quiz, and Flashcards.
+        Note: Mind Maps are NOT shareable.
+
+        For audio and video overviews (one per notebook), artifact_id is optional.
+        For reports, quizzes, and flashcards (multiple per notebook), artifact_id
+        is required.
+
+        Args:
+            notebook_id: The notebook ID.
+            artifact_id: The artifact ID to share. Optional for audio/video.
+            public: If True, create a public link.
+
+        Returns:
+            Share result with link information.
+        """
+        share_options = [1] if public else [0]
+        if artifact_id:
+            params = [share_options, notebook_id, artifact_id]
+        else:
+            params = [share_options, notebook_id]
+        return await self._core.rpc_call(
+            RPCMethod.SHARE_ARTIFACT,
+            params,
+            source_path=f"/notebook/{notebook_id}",
+            allow_null=True,
+        )
+
     async def share_audio(self, notebook_id: str, public: bool = False) -> Any:
         """Share an audio overview.
+
+        Convenience method for sharing the audio overview.
+        Equivalent to share(notebook_id, public=public).
 
         Args:
             notebook_id: The notebook ID.
@@ -1325,14 +1363,21 @@ class ArtifactsAPI:
         Returns:
             Share result with link information.
         """
-        share_options = [1] if public else [0]
-        params = [share_options, notebook_id]
-        return await self._core.rpc_call(
-            RPCMethod.SHARE_AUDIO,
-            params,
-            source_path=f"/notebook/{notebook_id}",
-            allow_null=True,
-        )
+        return await self.share(notebook_id, public=public)
+
+    async def share_video(self, notebook_id: str, public: bool = False) -> Any:
+        """Share a video overview.
+
+        Convenience method for sharing the video overview.
+
+        Args:
+            notebook_id: The notebook ID.
+            public: If True, create a public link.
+
+        Returns:
+            Share result with link information.
+        """
+        return await self.share(notebook_id, public=public)
 
     # =========================================================================
     # Suggestions

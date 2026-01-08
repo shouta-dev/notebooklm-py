@@ -566,7 +566,7 @@ class TestArtifactsAPI:
     ):
         """Test sharing audio overview."""
         response = build_rpc_response(
-            RPCMethod.SHARE_AUDIO,
+            RPCMethod.SHARE_ARTIFACT,
             ["https://notebooklm.google.com/share/abc123"],
         )
         httpx_mock.add_response(content=response.encode())
@@ -576,7 +576,73 @@ class TestArtifactsAPI:
 
         assert result is not None
         request = httpx_mock.get_request()
-        assert RPCMethod.SHARE_AUDIO in str(request.url)
+        assert RPCMethod.SHARE_ARTIFACT.value in str(request.url)
+
+    @pytest.mark.asyncio
+    async def test_share_video(
+        self,
+        auth_tokens,
+        httpx_mock: HTTPXMock,
+        build_rpc_response,
+    ):
+        """Test sharing video overview."""
+        response = build_rpc_response(
+            RPCMethod.SHARE_ARTIFACT,
+            ["https://notebooklm.google.com/share/video123"],
+        )
+        httpx_mock.add_response(content=response.encode())
+
+        async with NotebookLMClient(auth_tokens) as client:
+            result = await client.artifacts.share_video("nb_123", public=True)
+
+        assert result is not None
+        request = httpx_mock.get_request()
+        assert RPCMethod.SHARE_ARTIFACT.value in str(request.url)
+
+    @pytest.mark.asyncio
+    async def test_share_artifact_with_id(
+        self,
+        auth_tokens,
+        httpx_mock: HTTPXMock,
+        build_rpc_response,
+    ):
+        """Test sharing a specific artifact (report/quiz/flashcards)."""
+        response = build_rpc_response(
+            RPCMethod.SHARE_ARTIFACT,
+            ["https://notebooklm.google.com/share/report456"],
+        )
+        httpx_mock.add_response(content=response.encode())
+
+        async with NotebookLMClient(auth_tokens) as client:
+            result = await client.artifacts.share(
+                "nb_123", artifact_id="art_456", public=True
+            )
+
+        assert result is not None
+        request = httpx_mock.get_request()
+        assert RPCMethod.SHARE_ARTIFACT.value in str(request.url)
+        # Verify artifact_id is included in request
+        assert "art_456" in str(request.content)
+
+    @pytest.mark.asyncio
+    async def test_share_private(
+        self,
+        auth_tokens,
+        httpx_mock: HTTPXMock,
+        build_rpc_response,
+    ):
+        """Test making an artifact private."""
+        response = build_rpc_response(
+            RPCMethod.SHARE_ARTIFACT,
+            None,  # Private sharing may return null
+        )
+        httpx_mock.add_response(content=response.encode())
+
+        async with NotebookLMClient(auth_tokens) as client:
+            result = await client.artifacts.share("nb_123", public=False)
+
+        request = httpx_mock.get_request()
+        assert RPCMethod.SHARE_ARTIFACT.value in str(request.url)
 
     @pytest.mark.asyncio
     async def test_list_flashcards(

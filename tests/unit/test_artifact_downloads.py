@@ -321,3 +321,76 @@ class TestDownloadUrl:
         assert api._needs_browser_download(
             "https://other.example.com/file.mp4"
         ) is False
+
+
+class TestShareArtifact:
+    """Test artifact share methods."""
+
+    @pytest.mark.asyncio
+    async def test_share_public(self, mock_artifacts_api):
+        """Test sharing an artifact publicly."""
+        api, mock_core = mock_artifacts_api
+        mock_core.rpc_call.return_value = {
+            "share_url": "https://notebooklm.google.com/share/abc123"
+        }
+
+        result = await api.share("nb_123", public=True)
+
+        assert result is not None
+        mock_core.rpc_call.assert_called_once()
+        call_args = mock_core.rpc_call.call_args
+        # Check params: [[1], notebook_id]
+        assert call_args[0][1] == [[1], "nb_123"]
+
+    @pytest.mark.asyncio
+    async def test_share_private(self, mock_artifacts_api):
+        """Test making an artifact private."""
+        api, mock_core = mock_artifacts_api
+        mock_core.rpc_call.return_value = None
+
+        result = await api.share("nb_123", public=False)
+
+        mock_core.rpc_call.assert_called_once()
+        call_args = mock_core.rpc_call.call_args
+        # Check params: [[0], notebook_id]
+        assert call_args[0][1] == [[0], "nb_123"]
+
+    @pytest.mark.asyncio
+    async def test_share_with_artifact_id(self, mock_artifacts_api):
+        """Test sharing a specific artifact by ID."""
+        api, mock_core = mock_artifacts_api
+        mock_core.rpc_call.return_value = {
+            "share_url": "https://notebooklm.google.com/share/report456"
+        }
+
+        result = await api.share("nb_123", artifact_id="art_456", public=True)
+
+        assert result is not None
+        mock_core.rpc_call.assert_called_once()
+        call_args = mock_core.rpc_call.call_args
+        # Check params: [[1], notebook_id, artifact_id]
+        assert call_args[0][1] == [[1], "nb_123", "art_456"]
+
+    @pytest.mark.asyncio
+    async def test_share_audio_calls_share(self, mock_artifacts_api):
+        """Test share_audio is a convenience wrapper for share."""
+        api, mock_core = mock_artifacts_api
+        mock_core.rpc_call.return_value = {"share_url": "..."}
+
+        await api.share_audio("nb_123", public=True)
+
+        mock_core.rpc_call.assert_called_once()
+        call_args = mock_core.rpc_call.call_args
+        assert call_args[0][1] == [[1], "nb_123"]
+
+    @pytest.mark.asyncio
+    async def test_share_video_calls_share(self, mock_artifacts_api):
+        """Test share_video is a convenience wrapper for share."""
+        api, mock_core = mock_artifacts_api
+        mock_core.rpc_call.return_value = {"share_url": "..."}
+
+        await api.share_video("nb_123", public=True)
+
+        mock_core.rpc_call.assert_called_once()
+        call_args = mock_core.rpc_call.call_args
+        assert call_args[0][1] == [[1], "nb_123"]

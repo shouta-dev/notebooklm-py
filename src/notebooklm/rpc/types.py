@@ -76,7 +76,7 @@ class RPCMethod(str, Enum):
     GET_CONVERSATION_HISTORY = "hPTbtc"
 
     # Sharing operations
-    SHARE_AUDIO = "RGP97b"
+    SHARE_ARTIFACT = "RGP97b"  # Share any artifact (audio, video, report, quiz, flashcards)
     SHARE_PROJECT = "QDyure"
 
     # Additional notebook operations

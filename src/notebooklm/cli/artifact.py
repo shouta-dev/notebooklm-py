@@ -499,27 +499,43 @@ def artifact_suggestions(ctx, notebook_id, source_ids, json_output, client_auth)
     default=None,
     help="Notebook ID (uses current if not set)",
 )
-@click.option("--public/--private", default=False, help="Make audio public or private")
+@click.option(
+    "-a",
+    "--artifact",
+    "artifact_id",
+    default=None,
+    help="Artifact ID (required for reports/quizzes/flashcards, optional for audio/video)",
+)
+@click.option("--public/--private", default=False, help="Make artifact public or private")
 @with_client
-def artifact_share(ctx, notebook_id, public, client_auth):
-    """Share or unshare audio overview.
+def artifact_share(ctx, notebook_id, artifact_id, public, client_auth):
+    """Share or unshare an artifact.
 
-    Makes the audio overview publicly accessible or private.
+    Makes an artifact publicly accessible or private.
+    Shareable artifacts: Audio, Video, Reports, Quiz, Flashcards.
+    Note: Mind Maps are NOT shareable.
+
+    For audio/video overviews (one per notebook), artifact ID is optional.
+    For reports/quizzes/flashcards, artifact ID is required.
 
     \b
     Examples:
-      notebooklm artifact share --public   # Make audio public
-      notebooklm artifact share --private  # Make audio private
+      notebooklm artifact share --public              # Share audio/video
+      notebooklm artifact share -a ID --public        # Share specific artifact
+      notebooklm artifact share --private             # Make private
     """
     nb_id = require_notebook(notebook_id)
 
     async def _run():
         async with NotebookLMClient(client_auth) as client:
-            result = await client.artifacts.share_audio(nb_id, public=public)
+            result = await client.artifacts.share(
+                nb_id, artifact_id=artifact_id, public=public
+            )
 
             if result:
                 status = "public" if public else "private"
-                console.print(f"[green]Audio is now {status}[/green]")
+                artifact_desc = f"Artifact {artifact_id}" if artifact_id else "Artifact"
+                console.print(f"[green]{artifact_desc} is now {status}[/green]")
                 console.print(result)
             else:
                 console.print("[yellow]Share returned no result[/yellow]")

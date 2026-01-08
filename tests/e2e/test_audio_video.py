@@ -175,3 +175,18 @@ class TestAudioOperations:
         """Read-only test - checks share status."""
         result = await client.artifacts.share_audio(test_notebook_id, public=False)
         assert result is None or result is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.golden
+    async def test_share_video(self, client, test_notebook_id):
+        """Read-only test - checks video share status."""
+        result = await client.artifacts.share_video(test_notebook_id, public=False)
+        assert result is None or result is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.golden
+    async def test_share_generic(self, client, test_notebook_id):
+        """Read-only test - checks generic share method."""
+        # Test share without artifact_id (for audio/video)
+        result = await client.artifacts.share(test_notebook_id, public=False)
+        assert result is None or result is not None

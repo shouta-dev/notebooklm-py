@@ -44,7 +44,7 @@
 | `LBwxtb` | IMPORT_RESEARCH | Import research results | `_research.py` |
 | `rc3d8d` | RENAME_ARTIFACT | Rename artifact | `_artifacts.py` |
 | `Krh3pd` | EXPORT_ARTIFACT | Export to Docs/Sheets | `_artifacts.py` |
-| `RGP97b` | SHARE_AUDIO | Share audio artifact | `_artifacts.py` |
+| `RGP97b` | SHARE_ARTIFACT | Share artifact (audio, video, report, quiz, flashcards) | `_artifacts.py` |
 | `nS9Qlc` | LIST_FEATURED_PROJECTS | List featured notebooks | `_notebooks.py` |
 | `QDyure` | SHARE_PROJECT | Share notebook | `_notebooks.py` |
 | `ciyUvf` | GET_SUGGESTED_REPORTS | Get AI-suggested report formats | `_artifacts.py` |
@@ -1129,22 +1129,31 @@ await rpc_call(
 # Response: Export result with document URL
 ```
 
-### RPC: SHARE_AUDIO (RGP97b)
+### RPC: SHARE_ARTIFACT (RGP97b)
 
-**Source:** `_artifacts.py::share_audio()`
+**Source:** `_artifacts.py::share()`
 
-Share an audio overview.
+Share an artifact. Shareable artifacts include: Audio, Video, Reports, Quiz, and Flashcards.
+Note: Mind Maps are NOT shareable.
 
 ```python
 # share_options: [1] for public, [0] for private
+# For audio/video (one per notebook), artifact_id is optional:
 params = [
     share_options,  # 0: [1] for public link, [0] for private
     notebook_id,    # 1: Notebook ID
 ]
 
+# For reports/quizzes/flashcards (multiple per notebook), include artifact_id:
+params = [
+    share_options,  # 0: [1] for public link, [0] for private
+    notebook_id,    # 1: Notebook ID
+    artifact_id,    # 2: Artifact ID
+]
+
 # Called with source_path:
 await rpc_call(
-    RPCMethod.SHARE_AUDIO,
+    RPCMethod.SHARE_ARTIFACT,
     params,
     source_path=f"/notebook/{notebook_id}",
 )
