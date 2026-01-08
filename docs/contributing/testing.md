@@ -32,7 +32,7 @@ notebooklm status
 
 ### 3. Create Your Test Notebook (REQUIRED)
 
-**You MUST create a personal test notebook** with content for E2E tests to work. The golden notebook is read-only and insufficient for most tests.
+**You MUST create a personal test notebook** with content. Tests will exit with an error if not configured.
 
 1. Go to [NotebookLM](https://notebooklm.google.com)
 2. Create a new notebook (e.g., "E2E Test Notebook")
@@ -44,13 +44,17 @@ notebooklm status
    - At least one audio overview
    - At least one quiz or flashcard set
 5. Copy the notebook ID from the URL: `notebooklm.google.com/notebook/YOUR_NOTEBOOK_ID`
-6. Set the environment variable:
+6. Create your `.env` file:
 
+```bash
+cp .env.example .env
+# Edit .env and set your notebook ID
+```
+
+Or set the environment variable directly:
 ```bash
 export NOTEBOOKLM_TEST_NOTEBOOK_ID="your-notebook-id-here"
 ```
-
-Add this to your shell profile (`.bashrc`, `.zshrc`) for persistence.
 
 ### 4. Verify Setup
 
@@ -163,7 +167,7 @@ All markers defined in `pyproject.toml`:
 | `e2e` | Requires real API (excluded by default via `--ignore=tests/e2e`) |
 | `slow` | Takes 30+ seconds (generation tests) |
 | `exhaustive` | Parameter variant tests (exclude to save quota) |
-| `golden` | Uses golden notebook (read-only, safe) |
+| `golden` | Read-only tests (safe, fast, no side effects) |
 | `stable` | Consistently passes |
 | `unstable` | May fail due to rate limits or API changes |
 | `mutation` | Modifies and reverts golden data |
@@ -214,13 +218,9 @@ async def client(auth_tokens) -> NotebookLMClient:
 ### Notebooks
 
 ```python
-@pytest.fixture(scope="session")
-def golden_notebook_id() -> str:
-    """Returns DEFAULT_GOLDEN_NOTEBOOK_ID or env override"""
-
 @pytest.fixture
-def test_notebook_id(golden_notebook_id) -> str:
-    """Returns NOTEBOOKLM_TEST_NOTEBOOK_ID or golden"""
+def test_notebook_id() -> str:
+    """Returns NOTEBOOKLM_TEST_NOTEBOOK_ID (required)"""
 
 @pytest.fixture
 async def temp_notebook(client) -> Notebook:
@@ -239,25 +239,14 @@ async def generation_notebook(auth_tokens) -> Notebook:
 
 ## Environment Variables
 
+Set via `.env` file (recommended) or shell export:
+
 ```bash
-# Override golden notebook ID
-export NOTEBOOKLM_GOLDEN_NOTEBOOK_ID="your-id"
-
-# Override test_notebook_id fixture
-export NOTEBOOKLM_TEST_NOTEBOOK_ID="your-id"
+# Required: Your test notebook with sources and artifacts
+NOTEBOOKLM_TEST_NOTEBOOK_ID=your-notebook-id-here
 ```
 
-## Constants
-
-From `tests/e2e/conftest.py`:
-
-```python
-RATE_LIMIT_DELAY = 3.0        # Delay after tests
-SOURCE_PROCESSING_DELAY = 2.0  # Wait for source indexing
-POLL_INTERVAL = 2.0           # Status poll interval
-POLL_TIMEOUT = 60.0           # Max poll wait time
-DEFAULT_GOLDEN_NOTEBOOK_ID = "19bde485-a9c1-4809-8884-e872b2b67b44"
-```
+See `.env.example` for the template.
 
 ## Writing New Tests
 

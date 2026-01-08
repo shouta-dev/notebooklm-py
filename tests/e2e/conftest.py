@@ -6,6 +6,13 @@ import pytest
 import httpx
 from typing import AsyncGenerator
 
+# Load .env file if python-dotenv is available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed, rely on shell environment
+
 from notebooklm.auth import (
     load_auth_from_storage,
     extract_csrf_from_html,
@@ -161,35 +168,8 @@ async def cleanup_artifacts(created_artifacts, test_notebook_id, auth_tokens):
 
 
 # =============================================================================
-# Golden Notebook Fixtures (for read-only and mutation tests)
+# Notebook Fixtures
 # =============================================================================
-
-
-# Google's shared demo notebook - stable, pre-seeded with content
-DEFAULT_GOLDEN_NOTEBOOK_ID = "19bde485-a9c1-4809-8884-e872b2b67b44"
-
-
-@pytest.fixture(scope="session")
-def golden_notebook_id():
-    """Get golden notebook ID.
-
-    Defaults to Google's shared demo notebook which has pre-seeded:
-    - Sources: Various content types
-    - Artifacts: Audio, Video, Quiz, Flashcards, Slide Deck, Mind Map
-
-    Override with NOTEBOOKLM_GOLDEN_NOTEBOOK_ID env var if needed.
-    """
-    return os.environ.get("NOTEBOOKLM_GOLDEN_NOTEBOOK_ID", DEFAULT_GOLDEN_NOTEBOOK_ID)
-
-
-@pytest.fixture(scope="session")
-async def golden_client(auth_tokens) -> AsyncGenerator[NotebookLMClient, None]:
-    """Session-scoped client for golden notebook tests.
-
-    Use this for read-only tests that don't modify state.
-    """
-    async with NotebookLMClient(auth_tokens) as c:
-        yield c
 
 
 @pytest.fixture

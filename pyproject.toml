@@ -39,6 +39,7 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "pytest-httpx>=0.30.0",
     "pytest-cov>=4.0.0",
+    "python-dotenv>=1.0.0",
     "mypy>=1.0.0",
 ]
 all = ["notebooklm-py[browser,dev]"]
@@ -62,7 +63,7 @@ markers = [
     "e2e: end-to-end tests requiring authentication",
     "slow: slow tests (artifact generation, 15+ min)",
     "exhaustive: full coverage tests (deselect to minimize quota usage)",
-    "golden: tests using golden notebook (read-only)",
+    "golden: read-only tests (safe, fast, no side effects)",
     "mutation: tests that modify and revert golden data",
     "stable: tests that consistently pass",
     "unstable: tests that may fail due to rate limits or API changes",
