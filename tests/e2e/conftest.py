@@ -1,6 +1,7 @@
 """E2E test fixtures and configuration."""
 
 import os
+import uuid
 import warnings
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -24,6 +25,23 @@ from notebooklm.auth import (
     load_auth_from_storage,
 )
 from notebooklm.paths import get_home_dir
+
+
+def is_valid_uuid(value: str) -> bool:
+    """Check if a string is a valid UUID.
+
+    Args:
+        value: String to validate
+
+    Returns:
+        True if value is a valid UUID, False otherwise.
+    """
+    try:
+        uuid.UUID(str(value))
+        return True
+    except ValueError:
+        return False
+
 
 # =============================================================================
 # Constants
