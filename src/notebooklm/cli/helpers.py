@@ -129,7 +129,7 @@ def get_current_notebook() -> str | None:
     if not context_file.exists():
         return None
     try:
-        data = json.loads(context_file.read_text())
+        data = json.loads(context_file.read_text(encoding="utf-8"))
         return data.get("notebook_id")
     except (OSError, json.JSONDecodeError):
         return None
@@ -141,9 +141,22 @@ def set_current_notebook(
     is_owner: bool | None = None,
     created_at: str | None = None,
 ):
-    """Set the current notebook context."""
+    """Set the current notebook context.
+
+    If switching to a different notebook, the cached conversation_id is cleared
+    since conversations are notebook-specific.
+    """
     context_file = get_context_path()
     context_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Read existing context if available
+    current_context: dict = {}
+    if context_file.exists():
+        try:
+            current_context = json.loads(context_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass  # Start with fresh context if file is corrupt
+
     data: dict[str, str | bool] = {"notebook_id": notebook_id}
     if title:
         data["title"] = title
@@ -151,7 +164,12 @@ def set_current_notebook(
         data["is_owner"] = is_owner
     if created_at:
         data["created_at"] = created_at
-    context_file.write_text(json.dumps(data, indent=2))
+
+    # Preserve conversation_id only if staying in the same notebook
+    if current_context.get("notebook_id") == notebook_id and "conversation_id" in current_context:
+        data["conversation_id"] = current_context["conversation_id"]
+
+    context_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def clear_context():
@@ -167,7 +185,7 @@ def get_current_conversation() -> str | None:
     if not context_file.exists():
         return None
     try:
-        data = json.loads(context_file.read_text())
+        data = json.loads(context_file.read_text(encoding="utf-8"))
         return data.get("conversation_id")
     except (OSError, json.JSONDecodeError):
         return None
@@ -179,12 +197,12 @@ def set_current_conversation(conversation_id: str | None):
     if not context_file.exists():
         return
     try:
-        data = json.loads(context_file.read_text())
+        data = json.loads(context_file.read_text(encoding="utf-8"))
         if conversation_id:
             data["conversation_id"] = conversation_id
         elif "conversation_id" in data:
             del data["conversation_id"]
-        context_file.write_text(json.dumps(data, indent=2))
+        context_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     except (OSError, json.JSONDecodeError):
         pass
 
@@ -361,6 +379,27 @@ async def resolve_note_id(client, notebook_id: str, partial_id: str) -> str:
         entity_name="note",
         list_command="note list",
     )
+
+
+async def resolve_source_ids(
+    client, notebook_id: str, source_ids: tuple[str, ...]
+) -> list[str] | None:
+    """Resolve multiple partial source IDs to full IDs.
+
+    Args:
+        client: NotebookLM client
+        notebook_id: Resolved notebook ID
+        source_ids: Tuple of partial source IDs from CLI
+
+    Returns:
+        List of resolved source IDs, or None if no source IDs provided
+    """
+    if not source_ids:
+        return None
+    resolved = []
+    for sid in source_ids:
+        resolved.append(await resolve_source_id(client, notebook_id, sid))
+    return resolved
 
 
 # =============================================================================

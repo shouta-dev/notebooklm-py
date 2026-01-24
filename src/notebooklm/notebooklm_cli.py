@@ -23,8 +23,29 @@ LLM-friendly design:
   notebooklm ask "what are the key themes?"
 """
 
+import asyncio
 import logging
+import os
+import sys
 from pathlib import Path
+
+# =============================================================================
+# WINDOWS COMPATIBILITY FIXES (issue #75, #79, #80)
+# Must be applied before any async code runs
+# =============================================================================
+
+if sys.platform == "win32":
+    # Fix #79: Windows asyncio ProactorEventLoop can hang indefinitely at IOCP layer
+    # (GetQueuedCompletionStatus) in certain environments like Sandboxie.
+    # SelectorEventLoop avoids this issue.
+    import asyncio
+
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    # Fix #80: Non-English Windows systems (cp950, cp932, etc.) can fail with
+    # UnicodeEncodeError when outputting Unicode characters like checkmarks.
+    # Setting PYTHONUTF8 ensures consistent UTF-8 encoding.
+    os.environ.setdefault("PYTHONUTF8", "1")
 
 import click
 
@@ -122,6 +143,17 @@ cli.add_command(language)
 
 
 def main():
+    # Windows-specific fixes
+    if sys.platform == "win32":
+        # Force UTF-8 encoding for Unicode output on non-English Windows systems
+        # Prevents UnicodeEncodeError when displaying Unicode characters (✓, ✗, box drawing)
+        # on systems with legacy encodings (cp950, cp932, cp936, etc.)
+        os.environ.setdefault("PYTHONUTF8", "1")
+
+        # Fix asyncio hanging issue - use WindowsSelectorEventLoopPolicy instead of
+        # default ProactorEventLoop to avoid IOCP blocking on network operations
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     cli()
 
 

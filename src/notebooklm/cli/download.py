@@ -29,6 +29,7 @@ from .helpers import (
     console,
     handle_error,
     require_notebook,
+    resolve_notebook_id,
     run_async,
 )
 from .options import json_option
@@ -248,6 +249,8 @@ async def _download_artifacts_generic(
 
     async def _download() -> dict[str, Any]:
         async with NotebookLMClient(auth) as client:
+            nb_id_resolved = await resolve_notebook_id(client, nb_id)
+
             # Setup download method dispatch
             download_methods = {
                 "audio": client.artifacts.download_audio,
@@ -263,7 +266,7 @@ async def _download_artifacts_generic(
                 raise ValueError(f"Unknown artifact type: {artifact_type_name}")
 
             # Fetch artifacts
-            all_artifacts = await client.artifacts.list(nb_id)
+            all_artifacts = await client.artifacts.list(nb_id_resolved)
 
             # Filter by type and completed status
             completed_artifacts = [
@@ -379,7 +382,9 @@ async def _download_artifacts_generic(
                     # Download
                     try:
                         # Download using dispatch
-                        await download_fn(nb_id, str(item_path), artifact_id=str(artifact["id"]))
+                        await download_fn(
+                            nb_id_resolved, str(item_path), artifact_id=str(artifact["id"])
+                        )
 
                         results.append(
                             {
@@ -459,7 +464,7 @@ async def _download_artifacts_generic(
             try:
                 # Download using dispatch
                 result_path = await download_fn(
-                    nb_id, str(final_path), artifact_id=str(selected["id"])
+                    nb_id_resolved, str(final_path), artifact_id=str(selected["id"])
                 )
 
                 return {
@@ -933,15 +938,16 @@ async def _download_interactive(
     auth = await _get_auth_from_context(ctx)
 
     async with NotebookLMClient(auth) as client:
+        nb_id_resolved = await resolve_notebook_id(client, nb_id)
         ext = FORMAT_EXTENSIONS[output_format]
         path = output_path or f"{artifact_type}{ext}"
 
         if artifact_type == "quiz":
             return await client.artifacts.download_quiz(
-                nb_id, path, artifact_id=artifact_id, output_format=output_format
+                nb_id_resolved, path, artifact_id=artifact_id, output_format=output_format
             )
         return await client.artifacts.download_flashcards(
-            nb_id, path, artifact_id=artifact_id, output_format=output_format
+            nb_id_resolved, path, artifact_id=artifact_id, output_format=output_format
         )
 
 
