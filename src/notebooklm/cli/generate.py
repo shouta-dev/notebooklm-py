@@ -599,6 +599,7 @@ def generate_quiz(
 
     \b
     Use --json for machine-readable output.
+    Language is controlled by global setting (notebooklm language set <code>).
 
     \b
     Example:
@@ -671,6 +672,7 @@ def generate_flashcards(
 
     \b
     Use --json for machine-readable output.
+    Language is controlled by global setting (notebooklm language set <code>).
 
     \b
     Example:
@@ -869,6 +871,8 @@ def generate_mind_map(ctx, notebook_id, source_ids, json_output, client_auth):
 
     \b
     Use --json for machine-readable output.
+
+    Note: Uses global language setting (notebooklm language set <code>).
     """
     nb_id = require_notebook(notebook_id)
 
@@ -934,6 +938,7 @@ def _output_mind_map_result(result: Any, json_output: bool) -> None:
     help="Notebook ID (uses current if not set)",
 )
 @click.option("--source", "-s", "source_ids", multiple=True, help="Limit to specific source IDs")
+@click.option("--language", default=None, help="Output language (default: from config or 'en')")
 @click.option("--wait/--no-wait", default=False, help="Wait for completion (default: no-wait)")
 @retry_option
 @json_option
@@ -944,6 +949,7 @@ def generate_report_cmd(
     report_format,
     notebook_id,
     source_ids,
+    language,
     wait,
     max_retries,
     json_output,
@@ -997,6 +1003,7 @@ def generate_report_cmd(
                 return await client.artifacts.generate_report(
                     nb_id_resolved,
                     source_ids=sources,
+                    language=resolve_language(language),
                     report_format=report_format_enum,
                     custom_prompt=custom_prompt,
                 )

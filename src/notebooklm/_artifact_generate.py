@@ -276,6 +276,9 @@ class ArtifactGenerator:
     ) -> GenerationStatus:
         """Generate a quiz.
 
+        Note: Quiz language is controlled by the global language setting
+        (notebooklm language set <code>), not per-request parameters.
+
         Args:
             notebook_id: The notebook ID.
             source_ids: Source IDs to include. If None, uses all sources.
@@ -304,6 +307,9 @@ class ArtifactGenerator:
         difficulty: QuizDifficulty | None = None,
     ) -> GenerationStatus:
         """Generate flashcards.
+
+        Note: Flashcard language is controlled by the global language setting
+        (notebooklm language set <code>), not per-request parameters.
 
         Args:
             notebook_id: The notebook ID.
@@ -501,6 +507,9 @@ class ArtifactGenerator:
         The mind map is generated and saved as a note in the notebook.
         It will appear in artifact listings with type MIND_MAP (5).
 
+        Note: Mind maps use the global language setting and do not support
+        per-request language parameters.
+
         Args:
             notebook_id: The notebook ID.
             source_ids: Source IDs to include. If None, uses all sources.
@@ -625,6 +634,10 @@ class ArtifactGenerator:
         variant: int,
     ) -> GenerationStatus:
         """Generate quiz or flashcards (shared implementation).
+
+        Note: Language is controlled by the global language setting, not
+        per-request parameters. Use `notebooklm language set <code>` to
+        change the output language.
 
         Args:
             notebook_id: The notebook ID.
