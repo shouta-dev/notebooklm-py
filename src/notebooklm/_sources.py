@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -49,6 +49,22 @@ class SourcesAPI:
             core: The core client infrastructure.
         """
         self._core = core
+        self._upload_client: httpx.AsyncClient | None = None
+
+    async def _get_upload_client(self) -> httpx.AsyncClient:
+        """Get a shared httpx client for upload operations (lazy-initialized)."""
+        if self._upload_client is None:
+            self._upload_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=30.0, read=300.0, write=300.0, pool=300.0),
+                limits=httpx.Limits(max_connections=30, max_keepalive_connections=20),
+            )
+        return self._upload_client
+
+    async def close(self) -> None:
+        """Close the shared upload client."""
+        if self._upload_client is not None:
+            await self._upload_client.aclose()
+            self._upload_client = None
 
     async def list(self, notebook_id: str) -> list[Source]:
         """List all sources in a notebook.
@@ -455,6 +471,103 @@ class SourcesAPI:
             return await self.wait_until_ready(notebook_id, source.id, timeout=wait_timeout)
 
         return source
+
+    async def add_files(
+        self,
+        notebook_id: str,
+        file_paths: builtins.list[str | Path],
+        concurrency: int = 20,
+        wait: bool = False,
+        wait_timeout: float = 120.0,
+        on_progress: Callable[[str, str], None] | None = None,
+    ) -> builtins.list[Source]:
+        """Add multiple file sources in parallel with concurrency control.
+
+        Uses batch registration (single RPC) + parallel upload, matching
+        the browser UI's upload pattern for optimal performance.
+
+        Flow:
+            1. Validate all files exist
+            2. Batch-register all files in ONE RPC call → get all SOURCE_IDs
+            3. Parallel upload (session start + data stream) with Semaphore
+
+        Args:
+            notebook_id: The notebook ID.
+            file_paths: List of file paths to upload.
+            concurrency: Maximum number of concurrent uploads (default: 20).
+            wait: If True, wait for all sources to be ready.
+            wait_timeout: Per-source timeout if wait=True.
+            on_progress: Optional callback(filename, status) for progress reporting.
+
+        Returns:
+            List of created Source objects.
+        """
+        if not file_paths:
+            return []
+
+        # Step 0: Validate and resolve all file paths
+        resolved: builtins.list[Path] = []
+        for fp in file_paths:
+            p = Path(fp).resolve()
+            if not p.exists():
+                raise FileNotFoundError(f"File not found: {p}")
+            if not p.is_file():
+                raise ValidationError(f"Not a regular file: {p}")
+            resolved.append(p)
+
+        filenames = [p.name for p in resolved]
+
+        # Step 1: Batch-register all files in ONE RPC call
+        if on_progress:
+            on_progress("*", "registering")
+        logger.info("Batch-registering %d files in single RPC", len(filenames))
+        source_ids = await self._register_file_sources_batch(notebook_id, filenames)
+        logger.info("Batch registration complete: %d source IDs", len(source_ids))
+        if on_progress:
+            on_progress("*", "registered")
+
+        # Step 2: Parallel upload (session start + data stream)
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def _upload_one(file_path: Path, source_id: str) -> Source:
+            async with semaphore:
+                filename = file_path.name
+                file_size = file_path.stat().st_size
+                if on_progress:
+                    on_progress(str(file_path), "uploading")
+
+                upload_url = await self._start_resumable_upload(
+                    notebook_id, filename, file_size, source_id
+                )
+                await self._upload_file_streaming(upload_url, file_path)
+
+                if on_progress:
+                    on_progress(str(file_path), "done")
+
+                return Source(id=source_id, title=filename, _type_code=None)
+
+        tasks = [_upload_one(fp, sid) for fp, sid in zip(resolved, source_ids)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        errors = [
+            (fp, r)
+            for fp, r in zip(resolved, results)
+            if isinstance(r, Exception)
+        ]
+        successes = [r for r in results if not isinstance(r, Exception)]
+
+        if errors:
+            logger.error("Failed to upload %d/%d files", len(errors), len(file_paths))
+            for fp, err in errors:
+                logger.error("  %s: %s", fp, err)
+            if not successes:
+                raise errors[0][1]
+
+        if wait and successes:
+            sid_list = [s.id for s in successes]
+            successes = await self.wait_for_sources(notebook_id, sid_list, timeout=wait_timeout)
+
+        return successes
 
     async def add_drive(
         self,
@@ -930,6 +1043,94 @@ class SourcesAPI:
 
         raise SourceAddError(filename, message="Failed to get SOURCE_ID from registration response")
 
+    async def _register_file_sources_batch(
+        self, notebook_id: str, filenames: builtins.list[str]
+    ) -> builtins.list[str]:
+        """Register multiple file sources in a single RPC call (batch).
+
+        The browser UI sends all filenames in one RPC: [[file1],[file2],...].
+        This method replicates that behavior for significantly better performance.
+
+        Args:
+            notebook_id: The notebook ID.
+            filenames: List of filenames to register.
+
+        Returns:
+            List of SOURCE_IDs in the same order as filenames.
+        """
+        # Build batch params: [[file1], [file2], ...] instead of [[filename]]
+        file_entries = [[fn] for fn in filenames]
+        params = [
+            file_entries,
+            notebook_id,
+            [2],
+            [1, None, None, None, None, None, None, None, None, None, [1]],
+        ]
+
+        result = await self._core.rpc_call(
+            RPCMethod.ADD_SOURCE_FILE,
+            params,
+            source_path=f"/notebook/{notebook_id}",
+            allow_null=True,
+        )
+
+        # Parse batch response — extract all source IDs from nested structure
+        # Observed response structure for 3 files:
+        # [
+        #   [  # result[0] — flat list of entries
+        #     [['id1'], 'filename1', [None, None, None, None, 0]],
+        #     [['id2'], 'filename2', [None, None, None, None, 0]],
+        #     [['id3'], 'filename3', [None, None, None, None, 0]],
+        #   ],
+        #   None,
+        #   [...]  # duplicate data
+        # ]
+        # Single file returns: [[[["source_id"]]]]
+        source_ids: builtins.list[str] = []
+
+        def extract_id(data: Any) -> str | None:
+            """Recursively extract first string from nested lists."""
+            if isinstance(data, str):
+                return data
+            if isinstance(data, list) and len(data) > 0:
+                return extract_id(data[0])
+            return None
+
+        if result and isinstance(result, list):
+            # Strategy 1: result[0] is a list of [['id'], 'filename', ...] entries
+            if isinstance(result[0], list) and len(result[0]) > 0:
+                first_entry = result[0][0]
+                # Check if first_entry looks like [['id'], 'filename', ...]
+                if (
+                    isinstance(first_entry, list)
+                    and len(first_entry) >= 2
+                    and isinstance(first_entry[0], list)
+                    and isinstance(first_entry[1], str)
+                ):
+                    # Batch format: result[0] = [[['id1'], 'fn1', ...], [['id2'], 'fn2', ...]]
+                    for entry in result[0]:
+                        if isinstance(entry, list) and len(entry) >= 1:
+                            sid = extract_id(entry[0])
+                            if sid:
+                                source_ids.append(sid)
+
+            # Strategy 2: single file fallback — extract recursively
+            if not source_ids:
+                sid = extract_id(result)
+                if sid:
+                    source_ids = [sid]
+
+        if len(source_ids) != len(filenames):
+            raise SourceAddError(
+                ",".join(filenames),
+                message=(
+                    f"Batch registration returned {len(source_ids)} IDs "
+                    f"for {len(filenames)} files. Response: {str(result)[:500]}"
+                ),
+            )
+
+        return source_ids
+
     async def _start_resumable_upload(
         self,
         notebook_id: str,
@@ -962,17 +1163,17 @@ class SourcesAPI:
             }
         )
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(url, headers=headers, content=body)
-            response.raise_for_status()
+        client = await self._get_upload_client()
+        response = await client.post(url, headers=headers, content=body)
+        response.raise_for_status()
 
-            upload_url = response.headers.get("x-goog-upload-url")
-            if not upload_url:
-                raise SourceAddError(
-                    filename, message="Failed to get upload URL from response headers"
-                )
+        upload_url = response.headers.get("x-goog-upload-url")
+        if not upload_url:
+            raise SourceAddError(
+                filename, message="Failed to get upload URL from response headers"
+            )
 
-            return upload_url
+        return upload_url
 
     async def _upload_file_streaming(self, upload_url: str, file_path: Path) -> None:
         """Stream upload file content to the resumable upload URL.
@@ -1001,6 +1202,6 @@ class SourcesAPI:
                 while chunk := f.read(65536):  # 64KB chunks
                     yield chunk
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.post(upload_url, headers=headers, content=file_stream())
-            response.raise_for_status()
+        client = await self._get_upload_client()
+        response = await client.post(upload_url, headers=headers, content=file_stream())
+        response.raise_for_status()

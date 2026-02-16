@@ -109,6 +109,7 @@ class NotebookLMClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close the client connection."""
         logger.debug("Closing NotebookLM client")
+        await self.sources.close()
         await self._core.close()
 
     @property

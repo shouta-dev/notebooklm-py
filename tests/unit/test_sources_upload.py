@@ -1,10 +1,12 @@
 """Unit tests for SourcesAPI file upload pipeline and YouTube detection."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from notebooklm._sources import SourcesAPI
+from notebooklm.types import Source
 
 
 @pytest.fixture
@@ -520,3 +522,206 @@ class TestAddUrlSource:
         assert params[2] == [2]
         assert params[3] is None
         assert params[4] is None
+
+
+# =============================================================================
+# add_files() tests
+# =============================================================================
+
+
+class TestAddFiles:
+    """Tests for add_files() batch registration + parallel upload."""
+
+    def _make_files(self, tmp_path, names):
+        """Helper to create temp files and return their paths."""
+        paths = []
+        for name in names:
+            f = tmp_path / name
+            f.write_text(f"content of {name}")
+            paths.append(str(f))
+        return paths
+
+    def _mock_upload(self, sources_api, mock_core):
+        """Setup mocks for batch registration + upload steps."""
+        mock_start = MagicMock()
+        mock_start.headers = {"x-goog-upload-url": "https://upload.example.com/session"}
+        mock_upload = MagicMock()
+
+        # Patch the shared upload client
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=lambda *a, **kw: mock_start if "upload/_" in str(kw.get("url", a[0] if a else "")) or "x-goog-upload-command" not in str(kw.get("headers", {})) else mock_upload)
+        # Simpler: always return mock_start (has upload URL header) for session start,
+        # and mock_upload for data upload
+        mock_client.post = AsyncMock(return_value=mock_start)
+        sources_api._upload_client = mock_client
+
+    def _batch_response(self, id_name_pairs):
+        """Build mock batch registration response matching real API format.
+
+        Real format: [[['id1'], 'filename1', [...]], [['id2'], 'filename2', [...]], ...], None, [...]]
+        """
+        entries = [[[ pair[0] ], pair[1], [None, None, None, None, 0]] for pair in id_name_pairs]
+        return [entries, None, None]
+
+    @pytest.mark.asyncio
+    async def test_add_files_basic(self, sources_api, mock_core, tmp_path):
+        """3ファイルのバッチ登録 + 並列アップロード"""
+        files = self._make_files(tmp_path, ["a.md", "b.md", "c.md"])
+
+        # Batch registration returns 3 source IDs (real API format)
+        mock_core.rpc_call.return_value = self._batch_response([
+            ("s1", "a.md"), ("s2", "b.md"), ("s3", "c.md")
+        ])
+        self._mock_upload(sources_api, mock_core)
+
+        results = await sources_api.add_files("nb1", files)
+        assert len(results) == 3
+        assert [r.id for r in results] == ["s1", "s2", "s3"]
+        # Only 1 RPC call for batch registration
+        mock_core.rpc_call.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_add_files_concurrency_limit(self, sources_api, mock_core, tmp_path):
+        """concurrency=2 で最大2並列に制限される"""
+        names = [f"file{i}.md" for i in range(10)]
+        files = self._make_files(tmp_path, names)
+        mock_core.rpc_call.return_value = self._batch_response(
+            [(f"s{i}", names[i]) for i in range(10)]
+        )
+
+        max_concurrent = 0
+        current = 0
+        original_start = sources_api._start_resumable_upload
+
+        async def mock_start(nb_id, filename, file_size, source_id):
+            nonlocal max_concurrent, current
+            current += 1
+            max_concurrent = max(max_concurrent, current)
+            await asyncio.sleep(0.01)
+            current -= 1
+            return "https://upload.example.com/session"
+
+        mock_upload = MagicMock()
+        sources_api._upload_client = AsyncMock()
+        sources_api._upload_client.post = AsyncMock(return_value=mock_upload)
+
+        with patch.object(sources_api, "_start_resumable_upload", side_effect=mock_start):
+            await sources_api.add_files("nb1", files, concurrency=2)
+            assert max_concurrent <= 2
+
+    @pytest.mark.asyncio
+    async def test_add_files_upload_partial_failure(self, sources_api, mock_core, tmp_path):
+        """アップロード一部失敗時: 成功分を返す"""
+        files = self._make_files(tmp_path, ["good.md", "bad.md", "ok.md"])
+        mock_core.rpc_call.return_value = self._batch_response([
+            ("s1", "good.md"), ("s2", "bad.md"), ("s3", "ok.md")
+        ])
+
+        call_count = 0
+
+        async def mock_start(nb_id, filename, file_size, source_id):
+            nonlocal call_count
+            call_count += 1
+            if "bad" in filename:
+                raise ConnectionError(f"Upload failed: {filename}")
+            return "https://upload.example.com/session"
+
+        sources_api._upload_client = AsyncMock()
+        sources_api._upload_client.post = AsyncMock(return_value=MagicMock())
+
+        with patch.object(sources_api, "_start_resumable_upload", side_effect=mock_start):
+            results = await sources_api.add_files("nb1", files)
+            assert len(results) == 2  # bad.md以外の2件
+
+    @pytest.mark.asyncio
+    async def test_add_files_all_upload_fail(self, sources_api, mock_core, tmp_path):
+        """全アップロード失敗時: 例外をraise"""
+        files = self._make_files(tmp_path, ["a.md", "b.md"])
+        mock_core.rpc_call.return_value = self._batch_response([
+            ("s1", "a.md"), ("s2", "b.md")
+        ])
+
+        async def mock_start(*args, **kwargs):
+            raise ConnectionError("upload failed")
+
+        with patch.object(sources_api, "_start_resumable_upload", side_effect=mock_start):
+            with pytest.raises(ConnectionError):
+                await sources_api.add_files("nb1", files)
+
+    @pytest.mark.asyncio
+    async def test_add_files_empty(self, sources_api):
+        """空リスト → 空リスト返却"""
+        results = await sources_api.add_files("nb1", [])
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_add_files_with_progress(self, sources_api, mock_core, tmp_path):
+        """on_progressコールバックが呼ばれる"""
+        files = self._make_files(tmp_path, ["a.md"])
+        mock_core.rpc_call.return_value = self._batch_response([("s1", "a.md")])
+        self._mock_upload(sources_api, mock_core)
+
+        progress_calls = []
+        await sources_api.add_files(
+            "nb1",
+            files,
+            on_progress=lambda f, s: progress_calls.append((f, s)),
+        )
+        statuses = [s for _, s in progress_calls]
+        assert "registering" in statuses
+        assert "registered" in statuses
+        assert "uploading" in statuses
+        assert "done" in statuses
+
+    @pytest.mark.asyncio
+    async def test_add_files_file_not_found(self, sources_api, tmp_path):
+        """存在しないファイルでFileNotFoundError"""
+        with pytest.raises(FileNotFoundError):
+            await sources_api.add_files("nb1", ["/nonexistent/file.md"])
+
+    @pytest.mark.asyncio
+    async def test_add_files_single_rpc_call(self, sources_api, mock_core, tmp_path):
+        """バッチ登録が1回のRPCで行われることを確認"""
+        files = self._make_files(tmp_path, ["x.md", "y.md", "z.md"])
+        mock_core.rpc_call.return_value = self._batch_response([
+            ("s1", "x.md"), ("s2", "y.md"), ("s3", "z.md")
+        ])
+        self._mock_upload(sources_api, mock_core)
+
+        await sources_api.add_files("nb1", files)
+
+        # Verify batch registration params
+        call_args = mock_core.rpc_call.call_args
+        params = call_args[0][1]
+        # First param should be [[x.md], [y.md], [z.md]]
+        assert params[0] == [["x.md"], ["y.md"], ["z.md"]]
+        assert params[1] == "nb1"
+
+
+# =============================================================================
+# _get_upload_client() / close() tests
+# =============================================================================
+
+
+class TestUploadClient:
+    """Tests for shared upload client lifecycle."""
+
+    @pytest.mark.asyncio
+    async def test_get_upload_client_creates_once(self, sources_api):
+        """_get_upload_client() は同一インスタンスを返す"""
+        client1 = await sources_api._get_upload_client()
+        client2 = await sources_api._get_upload_client()
+        assert client1 is client2
+
+    @pytest.mark.asyncio
+    async def test_close_cleans_up_client(self, sources_api):
+        """close() でクライアントがNoneになる"""
+        client = await sources_api._get_upload_client()
+        assert sources_api._upload_client is not None
+        await sources_api.close()
+        assert sources_api._upload_client is None
+
+    @pytest.mark.asyncio
+    async def test_close_without_client(self, sources_api):
+        """close() はクライアント未生成でもエラーにならない"""
+        await sources_api.close()  # Should not raise

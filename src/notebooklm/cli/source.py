@@ -212,6 +212,70 @@ def source_add(ctx, content, notebook_id, source_type, title, mime_type, json_ou
     return _run()
 
 
+@source.command("add-files")
+@click.argument("files", nargs=-1, required=True, type=click.Path(exists=True))
+@click.option(
+    "-n",
+    "--notebook",
+    "notebook_id",
+    default=None,
+    help="Notebook ID (uses current if not set)",
+)
+@click.option(
+    "--concurrency",
+    default=20,
+    type=int,
+    help="Max parallel uploads (default: 20)",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
+@with_client
+def source_add_files(ctx, files, notebook_id, concurrency, json_output, client_auth):
+    """Add multiple files to a notebook in parallel.
+
+    \b
+    Examples:
+      source add-files *.md -n NOTEBOOK_ID
+      source add-files file1.pdf file2.txt --concurrency 10
+    """
+    nb_id = require_notebook(notebook_id)
+
+    async def _run():
+        async with NotebookLMClient(client_auth) as client:
+            nb_id_resolved = await resolve_notebook_id(client, nb_id)
+
+            uploaded = 0
+
+            def on_progress(filename, status):
+                nonlocal uploaded
+                if status == "done":
+                    uploaded += 1
+                    if not json_output:
+                        console.print(f"  [{uploaded}/{len(files)}] {Path(filename).name}")
+
+            sources = await client.sources.add_files(
+                nb_id_resolved,
+                list(files),
+                concurrency=concurrency,
+                on_progress=on_progress,
+            )
+
+            if json_output:
+                data = {
+                    "files_uploaded": len(sources),
+                    "files_total": len(files),
+                    "sources": [{"id": s.id, "title": s.title} for s in sources],
+                }
+                json_output_response(data)
+                return
+
+            console.print(f"\n[green]Uploaded {len(sources)}/{len(files)} files[/green]")
+
+    if not json_output:
+        with console.status(f"Uploading {len(files)} files (concurrency={concurrency})..."):
+            return _run()
+    return _run()
+
+
 @source.command("get")
 @click.argument("source_id")
 @click.option(
