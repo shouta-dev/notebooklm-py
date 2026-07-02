@@ -26,6 +26,7 @@ from ..auth import (
     fetch_tokens,
     load_auth_from_storage,
 )
+from ..exceptions import RPCError
 from ..paths import get_browser_profile_dir, get_context_path
 from ..types import ArtifactType
 
@@ -374,6 +375,23 @@ def handle_error(e: Exception):
     raise SystemExit(1)
 
 
+def rpc_error_extra(e: Exception) -> dict | None:
+    """Return structured RPC diagnostics for JSON CLI errors."""
+    if not isinstance(e, RPCError):
+        return None
+
+    extra = {}
+    if e.method_id:
+        extra["method_id"] = e.method_id
+    if e.rpc_code is not None:
+        extra["rpc_code"] = e.rpc_code
+    if e.found_ids:
+        extra["found_ids"] = e.found_ids
+    if e.raw_response:
+        extra["raw_response"] = e.raw_response
+    return extra or None
+
+
 def handle_auth_error(json_output: bool = False):
     """Handle authentication errors with helpful context."""
     from ..paths import get_path_info, get_storage_path
@@ -475,7 +493,7 @@ def with_client(f):
         except Exception as e:
             log_result("failed", str(e))
             if json_output:
-                json_error_response("ERROR", str(e))
+                json_error_response("ERROR", str(e), extra=rpc_error_extra(e))
             else:
                 handle_error(e)
 

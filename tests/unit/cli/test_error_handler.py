@@ -103,15 +103,24 @@ class TestHandleErrorsJsonOutput:
         assert data["code"] == "NOTEBOOKLM_ERROR"
         assert data["method_id"] == "abc123"
 
-    def test_rpc_error_non_verbose_excludes_method_id(self, capsys):
-        """RPCError without verbose should not include method_id."""
+    def test_rpc_error_json_includes_diagnostics_without_verbose(self, capsys):
+        """RPCError JSON output should include diagnostics for automation."""
         with pytest.raises(SystemExit), handle_errors(json_output=True, verbose=False):
-            raise RPCError("RPC failed", method_id="abc123")
+            raise RPCError(
+                "RPC failed",
+                method_id="abc123",
+                rpc_code=4,
+                found_ids=["def456"],
+                raw_response="raw body",
+            )
 
         output = capsys.readouterr().out
         data = json.loads(output)
         assert data["error"] is True
-        assert "method_id" not in data
+        assert data["method_id"] == "abc123"
+        assert data["rpc_code"] == 4
+        assert data["found_ids"] == ["def456"]
+        assert data["raw_response"] == "raw body"
 
     def test_unexpected_error_json_format(self, capsys):
         """Unexpected errors should produce UNEXPECTED_ERROR code."""

@@ -2,13 +2,9 @@
 
 import asyncio
 import logging
-import os
-import random
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Coroutine
-from contextlib import asynccontextmanager, contextmanager
-from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlencode
 
@@ -38,50 +34,11 @@ MAX_CONVERSATION_CACHE_SIZE = 100
 # Default HTTP timeouts in seconds
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_CONNECT_TIMEOUT = 10.0  # Connection establishment timeout
-_GET_NOTEBOOK_ASYNC_LOCK = asyncio.Lock()
 
 
 def _template_block() -> list[Any]:
     """Return NotebookLM's current request-options wrapper."""
     return [2, None, None, [1, None, None, None, None, None, None, None, None, None, [1]]]
-
-
-def _serialize_get_notebook_enabled() -> bool:
-    return os.environ.get("NOTEBOOKLM_SERIALIZE_GET_NOTEBOOK", "1") not in {"0", "false", "False"}
-
-
-@contextmanager
-def _process_file_lock():
-    path = Path(os.environ.get("NOTEBOOKLM_GET_NOTEBOOK_LOCK", "/tmp/notebooklm_get_notebook.lock"))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle = path.open("w")
-    try:
-        try:
-            import fcntl
-
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        except ImportError:
-            pass
-        yield
-    finally:
-        try:
-            import fcntl
-
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        except ImportError:
-            pass
-        handle.close()
-
-
-@asynccontextmanager
-async def _get_notebook_gate(method: RPCMethod):
-    if method != RPCMethod.GET_NOTEBOOK or not _serialize_get_notebook_enabled():
-        yield
-        return
-
-    async with _GET_NOTEBOOK_ASYNC_LOCK:
-        with _process_file_lock():
-            yield
 
 # Auth error detection patterns (case-insensitive)
 AUTH_ERROR_PATTERNS = (
@@ -243,7 +200,6 @@ class ClientCore:
         source_path: str = "/",
         allow_null: bool = False,
         _is_retry: bool = False,
-        _transient_attempt: int = 0,
     ) -> Any:
         """Make an RPC call to the NotebookLM API.
 
@@ -276,8 +232,7 @@ class ClientCore:
         body = build_request_body(rpc_request, self.auth.csrf_token)
 
         try:
-            async with _get_notebook_gate(method):
-                response = await self._http_client.post(url, content=body)
+            response = await self._http_client.post(url, content=body)
             response.raise_for_status()
         except (httpx.HTTPStatusError, httpx.RequestError) as e:
             elapsed = time.perf_counter() - start
@@ -388,26 +343,6 @@ class ClientCore:
                 if refreshed is not None:
                     return refreshed
 
-            if self._should_retry_transient_rpc_error(method, e, _transient_attempt):
-                delay = self._transient_retry_delay(_transient_attempt)
-                logger.warning(
-                    "RPC %s returned transient null/status response after %.3fs; "
-                    "retrying in %.1fs (attempt %d)",
-                    method.name,
-                    elapsed,
-                    delay,
-                    _transient_attempt + 1,
-                )
-                await asyncio.sleep(delay)
-                return await self.rpc_call(
-                    method,
-                    params,
-                    source_path,
-                    allow_null,
-                    _is_retry,
-                    _transient_attempt + 1,
-                )
-
             logger.error("RPC %s failed after %.3fs", method.name, elapsed)
             raise
         except Exception as e:
@@ -486,36 +421,6 @@ class ClientCore:
 
         # Retry with refreshed tokens
         return await self.rpc_call(method, params, source_path, allow_null, _is_retry=True)
-
-    def _should_retry_transient_rpc_error(
-        self,
-        method: RPCMethod,
-        error: RPCError,
-        attempt: int,
-    ) -> bool:
-        """Retry temporary GET_NOTEBOOK null/status responses from NotebookLM."""
-        if method != RPCMethod.GET_NOTEBOOK:
-            return False
-
-        max_retries = int(os.environ.get("NOTEBOOKLM_GET_NOTEBOOK_RETRIES", "3"))
-        if attempt >= max_retries:
-            return False
-
-        retryable_codes = {4, 5, "4", "5"}
-        if getattr(error, "rpc_code", None) in retryable_codes:
-            return True
-
-        message = str(error)
-        return (
-            "No result found for RPC ID" in message
-            or "returned null result" in message
-        )
-
-    def _transient_retry_delay(self, attempt: int) -> float:
-        base = float(os.environ.get("NOTEBOOKLM_GET_NOTEBOOK_RETRY_BASE", "5"))
-        cap = float(os.environ.get("NOTEBOOKLM_GET_NOTEBOOK_RETRY_MAX", "60"))
-        delay = min(base * (2**attempt), cap)
-        return delay + random.uniform(0, min(2.0, delay * 0.2))
 
     def get_http_client(self) -> httpx.AsyncClient:
         """Get the underlying HTTP client for direct requests.

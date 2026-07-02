@@ -22,6 +22,19 @@ from ..exceptions import (
 )
 
 
+def _rpc_extra(e: RPCError) -> dict[str, Any] | None:
+    extra: dict[str, Any] = {}
+    if e.method_id:
+        extra["method_id"] = e.method_id
+    if e.rpc_code is not None:
+        extra["rpc_code"] = e.rpc_code
+    if e.found_ids:
+        extra["found_ids"] = e.found_ids
+    if e.raw_response:
+        extra["raw_response"] = e.raw_response
+    return extra or None
+
+
 def _output_error(
     message: str,
     code: str,
@@ -118,8 +131,10 @@ def handle_errors(verbose: bool = False, json_output: bool = False) -> Generator
         )
     except NotebookLMError as e:
         extra_info: dict[str, Any] | None = None
-        if verbose and isinstance(e, RPCError) and e.method_id:
-            extra_info = {"method_id": e.method_id}
+        if isinstance(e, RPCError):
+            extra_info = _rpc_extra(e) if json_output else None
+            if verbose and not json_output and e.method_id:
+                extra_info = {"method_id": e.method_id}
         _output_error(f"Error: {e}", "NOTEBOOKLM_ERROR", json_output, 1, extra=extra_info)
     except click.ClickException:
         # Let Click handle its own exceptions (--help, bad args, etc.)
