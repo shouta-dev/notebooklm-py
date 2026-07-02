@@ -321,6 +321,13 @@ def extract_rpc_result(chunks: list[Any], rpc_id: str) -> Any:
                             method_id=rpc_id,
                             rpc_code="USER_DISPLAYABLE_ERROR",
                         )
+                    status_code = _extract_status_code(item[5])
+                    if status_code is not None:
+                        raise RPCError(
+                            f"RPC {rpc_id} returned null result with status code {status_code}",
+                            method_id=rpc_id,
+                            rpc_code=status_code,
+                        )
 
                 if isinstance(result_data, str):
                     try:
@@ -329,6 +336,23 @@ def extract_rpc_result(chunks: list[Any], rpc_id: str) -> Any:
                         return result_data
                 return result_data
 
+    return None
+
+
+def _extract_status_code(obj: Any) -> int | None:
+    """Extract Google's compact RPC status code from nested metadata."""
+    if isinstance(obj, int):
+        return obj
+    if isinstance(obj, list):
+        for item in obj:
+            code = _extract_status_code(item)
+            if code is not None:
+                return code
+    if isinstance(obj, dict):
+        for value in obj.values():
+            code = _extract_status_code(value)
+            if code is not None:
+                return code
     return None
 
 

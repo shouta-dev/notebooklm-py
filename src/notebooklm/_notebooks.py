@@ -10,6 +10,15 @@ from .types import Notebook, NotebookDescription, SuggestedTopic
 logger = logging.getLogger(__name__)
 
 
+def _template_block() -> list[Any]:
+    """Return NotebookLM's current request-options wrapper."""
+    return [2, None, None, [1, None, None, None, None, None, None, None, None, None, [1]]]
+
+
+def _get_notebook_params(notebook_id: str) -> list[Any]:
+    return [notebook_id, None, _template_block(), None, 0]
+
+
 class NotebooksAPI:
     """Operations on NotebookLM notebooks.
 
@@ -71,7 +80,7 @@ class NotebooksAPI:
         Returns:
             Notebook object with details.
         """
-        params = [notebook_id, None, [2], None, 0]
+        params = _get_notebook_params(notebook_id)
         result = await self._core.rpc_call(
             RPCMethod.GET_NOTEBOOK,
             params,
@@ -212,7 +221,7 @@ class NotebooksAPI:
         Returns:
             Raw API response data.
         """
-        params = [notebook_id, None, [2], None, 0]
+        params = _get_notebook_params(notebook_id)
         return await self._core.rpc_call(
             RPCMethod.GET_NOTEBOOK,
             params,

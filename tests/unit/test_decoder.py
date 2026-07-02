@@ -211,12 +211,26 @@ class TestExtractRPCResult:
         result = extract_rpc_result(chunks, RPCMethod.LIST_NOTEBOOKS.value)
         assert result is None
 
-    def test_null_result_with_non_error_info_returns_none(self):
-        """Test null result with non-error data at index 5 returns None."""
+    def test_null_result_with_status_code_raises_rpc_error(self):
+        """Test null result with compact status code raises RPCError."""
         chunks = [["wrb.fr", RPCMethod.LIST_NOTEBOOKS.value, None, None, None, [1, 2, 3]]]
 
-        result = extract_rpc_result(chunks, RPCMethod.LIST_NOTEBOOKS.value)
-        assert result is None
+        with pytest.raises(RPCError, match="status code 1") as exc_info:
+            extract_rpc_result(chunks, RPCMethod.LIST_NOTEBOOKS.value)
+
+        assert exc_info.value.rpc_code == 1
+
+    def test_null_get_notebook_status_4_response_raises_rpc_error(self):
+        """Test real-world GET_NOTEBOOK null/status-4 response is classified."""
+        chunks = [
+            [["wrb.fr", RPCMethod.GET_NOTEBOOK.value, None, None, None, [4], "generic"]],
+            [["e", 4, None, None, 145]],
+        ]
+
+        with pytest.raises(RPCError, match="status code 4") as exc_info:
+            extract_rpc_result(chunks, RPCMethod.GET_NOTEBOOK.value)
+
+        assert exc_info.value.rpc_code == 4
 
     def test_user_displayable_error_in_dict_structure(self):
         """Test UserDisplayableError detection in dictionary structures.

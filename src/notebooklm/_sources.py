@@ -29,6 +29,11 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 
+def _template_block() -> list[Any]:
+    """Return NotebookLM's current request-options wrapper."""
+    return [2, None, None, [1, None, None, None, None, None, None, None, None, None, [1]]]
+
+
 class SourcesAPI:
     """Operations on NotebookLM sources.
 
@@ -76,7 +81,7 @@ class SourcesAPI:
             List of Source objects.
         """
         # Get notebook data which includes sources
-        params = [notebook_id, None, [2], None, 0]
+        params = [notebook_id, None, _template_block(), None, 0]
         notebook = await self._core.rpc_call(
             RPCMethod.GET_NOTEBOOK,
             params,
