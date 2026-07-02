@@ -40,6 +40,11 @@ def _template_block() -> list[Any]:
     """Return NotebookLM's current request-options wrapper."""
     return [2, None, None, [1, None, None, None, None, None, None, None, None, None, [1]]]
 
+
+def _get_notebook_params(notebook_id: str) -> list[Any]:
+    """Return the live GET_NOTEBOOK payload shape."""
+    return [notebook_id, None, _template_block(), None, 0, [[None, None, []]]]
+
 # Auth error detection patterns (case-insensitive)
 AUTH_ERROR_PATTERNS = (
     "authentication",
@@ -511,7 +516,7 @@ class ClientCore:
         Note:
             Source IDs are triple-nested in RPC: source[0][0] contains the ID.
         """
-        params = [notebook_id, None, _template_block(), None, 0]
+        params = _get_notebook_params(notebook_id)
         notebook_data = await self.rpc_call(
             RPCMethod.GET_NOTEBOOK,
             params,

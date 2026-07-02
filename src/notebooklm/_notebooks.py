@@ -16,7 +16,7 @@ def _template_block() -> list[Any]:
 
 
 def _get_notebook_params(notebook_id: str) -> list[Any]:
-    return [notebook_id, None, _template_block(), None, 0]
+    return [notebook_id, None, _template_block(), None, 0, [[None, None, []]]]
 
 
 class NotebooksAPI:

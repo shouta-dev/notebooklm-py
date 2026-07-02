@@ -34,6 +34,10 @@ def _template_block() -> list[Any]:
     return [2, None, None, [1, None, None, None, None, None, None, None, None, None, [1]]]
 
 
+def _get_notebook_params(notebook_id: str) -> list[Any]:
+    return [notebook_id, None, _template_block(), None, 0, [[None, None, []]]]
+
+
 class SourcesAPI:
     """Operations on NotebookLM sources.
 
@@ -81,7 +85,7 @@ class SourcesAPI:
             List of Source objects.
         """
         # Get notebook data which includes sources
-        params = [notebook_id, None, _template_block(), None, 0]
+        params = _get_notebook_params(notebook_id)
         notebook = await self._core.rpc_call(
             RPCMethod.GET_NOTEBOOK,
             params,
