@@ -4,10 +4,11 @@ import asyncio
 import builtins
 import logging
 import re
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -530,40 +531,45 @@ class SourcesAPI:
         if on_progress:
             on_progress("*", "registering")
         logger.info("Batch-registering %d files in single RPC", len(filenames))
-        source_ids = await self._register_file_sources_batch(notebook_id, filenames)
-        logger.info("Batch registration complete: %d source IDs", len(source_ids))
+        registered_sources = await self._register_file_sources_batch(notebook_id, filenames)
+        logger.info("Batch registration complete: %d source IDs", len(registered_sources))
         if on_progress:
             on_progress("*", "registered")
+
+        registered_by_filename: dict[str, Source] = {
+            source.title: source for source in registered_sources if source.title is not None
+        }
 
         # Step 2: Parallel upload (session start + data stream)
         semaphore = asyncio.Semaphore(concurrency)
 
-        async def _upload_one(file_path: Path, source_id: str) -> Source:
+        async def _upload_one(file_path: Path) -> Source:
             async with semaphore:
                 filename = file_path.name
+                source = registered_by_filename[filename]
                 file_size = file_path.stat().st_size
                 if on_progress:
                     on_progress(str(file_path), "uploading")
 
                 upload_url = await self._start_resumable_upload(
-                    notebook_id, filename, file_size, source_id
+                    notebook_id, filename, file_size, source.id
                 )
                 await self._upload_file_streaming(upload_url, file_path)
 
                 if on_progress:
                     on_progress(str(file_path), "done")
 
-                return Source(id=source_id, title=filename, _type_code=None)
+                return source
 
-        tasks = [_upload_one(fp, sid) for fp, sid in zip(resolved, source_ids)]
+        tasks = [_upload_one(fp) for fp in resolved]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         errors = [
             (fp, r)
-            for fp, r in zip(resolved, results)
+            for fp, r in zip(resolved, results, strict=True)
             if isinstance(r, Exception)
         ]
-        successes = [r for r in results if not isinstance(r, Exception)]
+        successes: list[Source] = [r for r in results if isinstance(r, Source)]
 
         if errors:
             logger.error("Failed to upload %d/%d files", len(errors), len(file_paths))
@@ -1054,7 +1060,7 @@ class SourcesAPI:
 
     async def _register_file_sources_batch(
         self, notebook_id: str, filenames: builtins.list[str]
-    ) -> builtins.list[str]:
+    ) -> builtins.list[Source]:
         """Register multiple file sources in a single RPC call (batch).
 
         The browser UI sends all filenames in one RPC: [[file1],[file2],...].
@@ -1065,7 +1071,9 @@ class SourcesAPI:
             filenames: List of filenames to register.
 
         Returns:
-            List of SOURCE_IDs in the same order as filenames.
+            List of registered Source objects. The order is not trusted by callers;
+            callers must match by title because NotebookLM may return entries in a
+            different order from the input filenames.
         """
         # Build batch params: [[file1], [file2], ...] instead of [[filename]]
         file_entries = [[fn] for fn in filenames]
@@ -1095,7 +1103,7 @@ class SourcesAPI:
         #   [...]  # duplicate data
         # ]
         # Single file returns: [[[["source_id"]]]]
-        source_ids: builtins.list[str] = []
+        sources: builtins.list[Source] = []
 
         def extract_id(data: Any) -> str | None:
             """Recursively extract first string from nested lists."""
@@ -1118,27 +1126,44 @@ class SourcesAPI:
                 ):
                     # Batch format: result[0] = [[['id1'], 'fn1', ...], [['id2'], 'fn2', ...]]
                     for entry in result[0]:
-                        if isinstance(entry, list) and len(entry) >= 1:
+                        if isinstance(entry, list) and len(entry) >= 2:
                             sid = extract_id(entry[0])
-                            if sid:
-                                source_ids.append(sid)
+                            title = entry[1] if isinstance(entry[1], str) else None
+                            if sid and title:
+                                sources.append(Source(id=sid, title=title, _type_code=None))
 
             # Strategy 2: single file fallback — extract recursively
-            if not source_ids:
+            if not sources:
                 sid = extract_id(result)
-                if sid:
-                    source_ids = [sid]
+                if sid and len(filenames) == 1:
+                    sources = [Source(id=sid, title=filenames[0], _type_code=None)]
 
-        if len(source_ids) != len(filenames):
+        returned_titles = [source.title for source in sources if source.title is not None]
+        missing_titles = sorted(set(filenames) - set(returned_titles))
+        unexpected_titles = sorted(set(returned_titles) - set(filenames))
+        duplicate_titles = sorted(
+            title for title, count in {t: returned_titles.count(t) for t in returned_titles}.items() if count > 1
+        )
+
+        if (
+            len(sources) != len(filenames)
+            or missing_titles
+            or unexpected_titles
+            or duplicate_titles
+        ):
             raise SourceAddError(
                 ",".join(filenames),
                 message=(
-                    f"Batch registration returned {len(source_ids)} IDs "
-                    f"for {len(filenames)} files. Response: {str(result)[:500]}"
+                    f"Batch registration returned an invalid source mapping: "
+                    f"sources={len(sources)} files={len(filenames)} "
+                    f"missing_titles={missing_titles[:5]} "
+                    f"unexpected_titles={unexpected_titles[:5]} "
+                    f"duplicate_titles={duplicate_titles[:5]} "
+                    f"Response: {str(result)[:500]}"
                 ),
             )
 
-        return source_ids
+        return sources
 
     async def _start_resumable_upload(
         self,

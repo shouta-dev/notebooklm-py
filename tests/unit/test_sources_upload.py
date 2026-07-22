@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from notebooklm._sources import SourcesAPI
-from notebooklm.types import Source
 
 
 @pytest.fixture
@@ -581,6 +580,53 @@ class TestAddFiles:
         mock_core.rpc_call.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_add_files_matches_source_ids_by_returned_filename(self, sources_api, mock_core, tmp_path):
+        """登録RPCの返却順が入力順と異なってもfilenameでsource_idを対応付ける"""
+        files = self._make_files(tmp_path, ["a.md", "b.md", "c.md"])
+
+        mock_core.rpc_call.return_value = self._batch_response([
+            ("s-c", "c.md"), ("s-a", "a.md"), ("s-b", "b.md")
+        ])
+
+        upload_starts = []
+
+        async def mock_start(nb_id, filename, file_size, source_id):
+            upload_starts.append((filename, source_id))
+            return "https://upload.example.com/session"
+
+        async def mock_upload(upload_url, file_path):
+            return None
+
+        with patch.object(sources_api, "_start_resumable_upload", side_effect=mock_start), \
+             patch.object(sources_api, "_upload_file_streaming", side_effect=mock_upload):
+            results = await sources_api.add_files("nb1", files)
+
+        assert [(r.title, r.id) for r in results] == [
+            ("a.md", "s-a"), ("b.md", "s-b"), ("c.md", "s-c")
+        ]
+        assert sorted(upload_starts) == [
+            ("a.md", "s-a"), ("b.md", "s-b"), ("c.md", "s-c")
+        ]
+
+    @pytest.mark.asyncio
+    async def test_add_files_rejects_registration_title_mismatch(self, sources_api, mock_core, tmp_path):
+        """登録RPCの返却titleが入力filenameと一致しない場合は順序補完せず止める"""
+        from notebooklm.exceptions import SourceAddError
+
+        files = self._make_files(tmp_path, ["a.md", "b.md"])
+        mock_core.rpc_call.return_value = self._batch_response([
+            ("s1", "a.md"), ("s2", "other.md")
+        ])
+
+        with (
+            patch.object(sources_api, "_start_resumable_upload") as mock_start,
+            pytest.raises(SourceAddError, match="invalid source mapping"),
+        ):
+            await sources_api.add_files("nb1", files)
+
+        mock_start.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_add_files_concurrency_limit(self, sources_api, mock_core, tmp_path):
         """concurrency=2 で最大2並列に制限される"""
         names = [f"file{i}.md" for i in range(10)]
@@ -591,7 +637,6 @@ class TestAddFiles:
 
         max_concurrent = 0
         current = 0
-        original_start = sources_api._start_resumable_upload
 
         async def mock_start(nb_id, filename, file_size, source_id):
             nonlocal max_concurrent, current
@@ -644,9 +689,11 @@ class TestAddFiles:
         async def mock_start(*args, **kwargs):
             raise ConnectionError("upload failed")
 
-        with patch.object(sources_api, "_start_resumable_upload", side_effect=mock_start):
-            with pytest.raises(ConnectionError):
-                await sources_api.add_files("nb1", files)
+        with (
+            patch.object(sources_api, "_start_resumable_upload", side_effect=mock_start),
+            pytest.raises(ConnectionError),
+        ):
+            await sources_api.add_files("nb1", files)
 
     @pytest.mark.asyncio
     async def test_add_files_empty(self, sources_api):
@@ -716,7 +763,7 @@ class TestUploadClient:
     @pytest.mark.asyncio
     async def test_close_cleans_up_client(self, sources_api):
         """close() でクライアントがNoneになる"""
-        client = await sources_api._get_upload_client()
+        await sources_api._get_upload_client()
         assert sources_api._upload_client is not None
         await sources_api.close()
         assert sources_api._upload_client is None
