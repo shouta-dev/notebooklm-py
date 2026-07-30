@@ -124,8 +124,10 @@ class NotebooksAPI:
             source_path="/",  # Home page context, not notebook page
             allow_null=True,
         )
-        # Fetch and return the updated notebook
-        return await self.get(notebook_id)
+        # Do not fetch the notebook after rename. Large or temporarily unhealthy
+        # notebooks can fail GET_NOTEBOOK even when the rename RPC itself
+        # succeeded, which turns a successful rename into a false failure.
+        return Notebook(id=notebook_id, title=new_title)
 
     async def get_summary(self, notebook_id: str) -> str:
         """Get raw summary text for a notebook.

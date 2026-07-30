@@ -410,9 +410,11 @@ class TestWithClientDecorator:
         runner = CliRunner()
         with patch("notebooklm.cli.helpers.load_auth_from_storage") as mock_load:
             mock_load.return_value = {"SID": "test"}
-            with patch("notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
-                mock_fetch.return_value = ("csrf", "session")
-                result = runner.invoke(test_cmd)
+            with patch("notebooklm.cli.helpers.load_httpx_cookies") as mock_httpx_cookies:
+                mock_httpx_cookies.return_value = {"SID": "test"}
+                with patch("notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
+                    mock_fetch.return_value = ("csrf", "session")
+                    result = runner.invoke(test_cmd)
 
         assert result.exit_code == 0
         assert "Got auth: True" in result.output
@@ -454,9 +456,11 @@ class TestWithClientDecorator:
         runner = CliRunner()
         with patch("notebooklm.cli.helpers.load_auth_from_storage") as mock_load:
             mock_load.return_value = {"SID": "test"}
-            with patch("notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
-                mock_fetch.return_value = ("csrf", "session")
-                result = runner.invoke(test_cmd)
+            with patch("notebooklm.cli.helpers.load_httpx_cookies") as mock_httpx_cookies:
+                mock_httpx_cookies.return_value = {"SID": "test"}
+                with patch("notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
+                    mock_fetch.return_value = ("csrf", "session")
+                    result = runner.invoke(test_cmd)
 
         assert result.exit_code == 1
         assert "Test error" in result.output
@@ -478,9 +482,11 @@ class TestWithClientDecorator:
         runner = CliRunner()
         with patch("notebooklm.cli.helpers.load_auth_from_storage") as mock_load:
             mock_load.return_value = {"SID": "test"}
-            with patch("notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
-                mock_fetch.return_value = ("csrf", "session")
-                result = runner.invoke(test_cmd, ["--json"])
+            with patch("notebooklm.cli.helpers.load_httpx_cookies") as mock_httpx_cookies:
+                mock_httpx_cookies.return_value = {"SID": "test"}
+                with patch("notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
+                    mock_fetch.return_value = ("csrf", "session")
+                    result = runner.invoke(test_cmd, ["--json"])
 
         assert result.exit_code == 1
         data = json.loads(result.output)
@@ -500,10 +506,12 @@ class TestGetClient:
 
         with patch("notebooklm.cli.helpers.load_auth_from_storage") as mock_load:
             mock_load.return_value = {"SID": "test_sid"}
-            with patch("notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
-                mock_fetch.return_value = ("csrf_token", "session_id")
+            with patch("notebooklm.cli.helpers.load_httpx_cookies") as mock_httpx_cookies:
+                mock_httpx_cookies.return_value = {"SID": "test_sid"}
+                with patch("notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
+                    mock_fetch.return_value = ("csrf_token", "session_id")
 
-                cookies, csrf, session = get_client(ctx)
+                    cookies, csrf, session = get_client(ctx)
 
         assert cookies == {"SID": "test_sid"}
         assert csrf == "csrf_token"
@@ -515,10 +523,12 @@ class TestGetClient:
 
         with patch("notebooklm.cli.helpers.load_auth_from_storage") as mock_load:
             mock_load.return_value = {"SID": "test"}
-            with patch("notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
-                mock_fetch.return_value = ("csrf", "session")
+            with patch("notebooklm.cli.helpers.load_httpx_cookies") as mock_httpx_cookies:
+                mock_httpx_cookies.return_value = {"SID": "test"}
+                with patch("notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
+                    mock_fetch.return_value = ("csrf", "session")
 
-                get_client(ctx)
+                    get_client(ctx)
 
         mock_load.assert_called_once_with("/custom/path")
 
@@ -530,10 +540,12 @@ class TestGetAuthTokens:
 
         with patch("notebooklm.cli.helpers.load_auth_from_storage") as mock_load:
             mock_load.return_value = {"SID": "test_sid"}
-            with patch("notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
-                mock_fetch.return_value = ("csrf_token", "session_id")
+            with patch("notebooklm.cli.helpers.load_httpx_cookies") as mock_httpx_cookies:
+                mock_httpx_cookies.return_value = {"SID": "test_sid"}
+                with patch("notebooklm.cli.helpers.fetch_tokens", new_callable=AsyncMock) as mock_fetch:
+                    mock_fetch.return_value = ("csrf_token", "session_id")
 
-                auth = get_auth_tokens(ctx)
+                    auth = get_auth_tokens(ctx)
 
         assert auth.cookies == {"SID": "test_sid"}
         assert auth.csrf_token == "csrf_token"

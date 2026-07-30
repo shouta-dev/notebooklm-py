@@ -225,6 +225,17 @@ class TestResolveSourceId:
     """Test partial source ID resolution."""
 
     @pytest.mark.asyncio
+    async def test_uuid_match_skips_source_list(self, mock_client_with_sources):
+        """UUID source IDs are already canonical and do not require source list."""
+        mock_client_with_sources.sources.list = AsyncMock()
+
+        source_id = "76f0e432-b057-43a8-bc00-b60d58696f74"
+        result = await resolve_source_id(mock_client_with_sources, "nb_123", source_id)
+
+        assert result == source_id
+        mock_client_with_sources.sources.list.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_exact_match_returns_unchanged(self, mock_client_with_sources, sample_sources):
         """Exact full ID match returns the ID unchanged."""
         mock_client_with_sources.sources.list = AsyncMock(return_value=sample_sources)

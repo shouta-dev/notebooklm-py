@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from functools import wraps
 from typing import TYPE_CHECKING
@@ -25,6 +26,7 @@ from ..auth import (
     AuthTokens,
     fetch_tokens,
     load_auth_from_storage,
+    load_httpx_cookies,
 )
 from ..exceptions import RPCError
 from ..paths import get_browser_profile_dir, get_context_path
@@ -35,6 +37,10 @@ if TYPE_CHECKING:
 
 console = Console()
 logger = logging.getLogger(__name__)
+UUID_PATTERN = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
 # Backward-compatible module-level constants (for tests that patch these)
 # Note: Prefer using get_context_path() and get_browser_profile_dir() for dynamic resolution
@@ -101,7 +107,8 @@ def get_client(ctx) -> tuple[dict, str, str]:
     """
     storage_path = ctx.obj.get("storage_path") if ctx.obj else None
     cookies = load_auth_from_storage(storage_path)
-    csrf, session_id = run_async(fetch_tokens(cookies))
+    httpx_cookies = load_httpx_cookies(storage_path)
+    csrf, session_id = run_async(fetch_tokens(httpx_cookies))
     return cookies, csrf, session_id
 
 
@@ -115,7 +122,13 @@ def get_auth_tokens(ctx) -> AuthTokens:
         AuthTokens ready for client construction
     """
     cookies, csrf, session_id = get_client(ctx)
-    return AuthTokens(cookies=cookies, csrf_token=csrf, session_id=session_id)
+    storage_path = ctx.obj.get("storage_path") if ctx.obj else None
+    return AuthTokens(
+        cookies=cookies,
+        csrf_token=csrf,
+        session_id=session_id,
+        httpx_cookies=load_httpx_cookies(storage_path),
+    )
 
 
 # =============================================================================
@@ -315,6 +328,9 @@ async def resolve_notebook_id(client, partial_id: str) -> str:
 
 async def resolve_source_id(client, notebook_id: str, partial_id: str) -> str:
     """Resolve partial source ID to full ID."""
+    if isinstance(partial_id, str) and UUID_PATTERN.match(partial_id):
+        return partial_id
+
     return await _resolve_partial_id(
         partial_id,
         list_fn=lambda: client.sources.list(notebook_id),

@@ -512,7 +512,7 @@ class TestFetchTokens:
         </html>
         """
         httpx_mock.add_response(
-            url="https://notebooklm.google.com/",
+            url="https://notebook.google.com/",
             content=html.encode(),
         )
 
@@ -525,6 +525,15 @@ class TestFetchTokens:
     @pytest.mark.asyncio
     async def test_fetch_tokens_redirect_to_login(self, httpx_mock: HTTPXMock):
         """Test raises error when redirected to login page."""
+        httpx_mock.add_response(
+            url="https://notebook.google.com/",
+            status_code=302,
+            headers={"Location": "https://accounts.google.com/signin"},
+        )
+        httpx_mock.add_response(
+            url="https://accounts.google.com/signin",
+            content=b"<html>Login</html>",
+        )
         httpx_mock.add_response(
             url="https://notebooklm.google.com/",
             status_code=302,
@@ -600,6 +609,7 @@ class TestIsAllowedCookieDomain:
 
         assert _is_allowed_cookie_domain(".google.com") is True
         assert _is_allowed_cookie_domain("notebooklm.google.com") is True
+        assert _is_allowed_cookie_domain("notebook.google.com") is True
         assert _is_allowed_cookie_domain(".googleusercontent.com") is True
 
     def test_accepts_valid_google_subdomains(self):
@@ -680,6 +690,7 @@ class TestAllowedCookieDomains:
 
         assert ".google.com" in ALLOWED_COOKIE_DOMAINS
         assert "notebooklm.google.com" in ALLOWED_COOKIE_DOMAINS
+        assert "notebook.google.com" in ALLOWED_COOKIE_DOMAINS
 
 
 # =============================================================================
@@ -841,6 +852,7 @@ class TestIsAllowedAuthDomain:
 
         assert _is_allowed_auth_domain(".google.com") is True
         assert _is_allowed_auth_domain("notebooklm.google.com") is True
+        assert _is_allowed_auth_domain("notebook.google.com") is True
         assert _is_allowed_auth_domain(".googleusercontent.com") is True
 
     def test_accepts_all_regional_patterns(self):

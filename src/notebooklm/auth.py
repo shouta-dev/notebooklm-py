@@ -37,6 +37,7 @@ from typing import Any
 
 import httpx
 
+from ._domains import get_base_urls
 from ._url_utils import contains_google_auth_redirect, is_google_auth_redirect
 from .paths import get_storage_path
 
@@ -50,6 +51,9 @@ MINIMUM_REQUIRED_COOKIES = {"SID"}
 ALLOWED_COOKIE_DOMAINS = {
     ".google.com",
     "notebooklm.google.com",
+    ".notebooklm.google.com",
+    "notebook.google.com",
+    ".notebook.google.com",
     ".googleusercontent.com",
 }
 
@@ -158,6 +162,7 @@ class AuthTokens:
     cookies: dict[str, str]
     csrf_token: str
     session_id: str
+    httpx_cookies: httpx.Cookies | None = None
 
     @property
     def cookie_header(self) -> str:
@@ -193,8 +198,14 @@ class AuthTokens:
                 notebooks = await client.list_notebooks()
         """
         cookies = load_auth_from_storage(path)
-        csrf_token, session_id = await fetch_tokens(cookies)
-        return cls(cookies=cookies, csrf_token=csrf_token, session_id=session_id)
+        httpx_cookies = load_httpx_cookies(path)
+        csrf_token, session_id = await fetch_tokens(httpx_cookies)
+        return cls(
+            cookies=cookies,
+            csrf_token=csrf_token,
+            session_id=session_id,
+            httpx_cookies=httpx_cookies,
+        )
 
 
 def _is_google_domain(domain: str) -> bool:
@@ -251,7 +262,7 @@ def _is_allowed_auth_domain(domain: str) -> bool:
 def extract_cookies_from_storage(storage_state: dict[str, Any]) -> dict[str, str]:
     """Extract Google cookies from Playwright storage state for NotebookLM auth.
 
-    Filters cookies to include those from .google.com, notebooklm.google.com,
+    Filters cookies to include those from .google.com, NotebookLM/Gemini Notebook,
     .googleusercontent.com domains, and regional Google domains
     (e.g., .google.com.sg, .google.com.au). The regional domains are needed
     because Google sets SID cookies on country-specific domains for users
@@ -349,7 +360,7 @@ def extract_csrf_from_html(html: str, final_url: str = "") -> str:
     It's required for all RPC calls to prevent cross-site request forgery.
 
     Args:
-        html: Page HTML content from notebooklm.google.com
+        html: Page HTML content from NotebookLM/Gemini Notebook
         final_url: The final URL after redirects (for error messages)
 
     Returns:
@@ -381,7 +392,7 @@ def extract_session_id_from_html(html: str, final_url: str = "") -> str:
     It's passed in URL query parameters for RPC calls.
 
     Args:
-        html: Page HTML content from notebooklm.google.com
+        html: Page HTML content from NotebookLM/Gemini Notebook
         final_url: The final URL after redirects (for error messages)
 
     Returns:
@@ -585,7 +596,7 @@ def load_httpx_cookies(path: Path | None = None) -> "httpx.Cookies":
     return cookies
 
 
-async def fetch_tokens(cookies: dict[str, str]) -> tuple[str, str]:
+async def fetch_tokens(cookies: dict[str, str] | httpx.Cookies) -> tuple[str, str]:
     """Fetch CSRF token and session ID from NotebookLM homepage.
 
     Makes an authenticated request to NotebookLM and extracts the required
@@ -602,29 +613,46 @@ async def fetch_tokens(cookies: dict[str, str]) -> tuple[str, str]:
         ValueError: If tokens cannot be extracted from response
     """
     logger.debug("Fetching CSRF and session tokens from NotebookLM")
-    cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items())
+    cookie_header = None
+    client_cookies = None
+    if isinstance(cookies, httpx.Cookies):
+        client_cookies = cookies
+    else:
+        cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items())
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            "https://notebooklm.google.com/",
-            headers={"Cookie": cookie_header},
-            follow_redirects=True,
-            timeout=30.0,
-        )
-        response.raise_for_status()
-
-        final_url = str(response.url)
-
-        # Check if we were redirected to login
-        if is_google_auth_redirect(final_url):
-            raise ValueError(
-                "Authentication expired or invalid. "
-                "Redirected to: " + final_url + "\n"
-                "Run 'notebooklm login' to re-authenticate."
+    last_error: Exception | None = None
+    async with httpx.AsyncClient(cookies=client_cookies) as client:
+        for base_url in get_base_urls():
+            headers = {"Cookie": cookie_header} if cookie_header else None
+            response = await client.get(
+                f"{base_url}/",
+                headers=headers,
+                follow_redirects=True,
+                timeout=30.0,
             )
+            response.raise_for_status()
 
-        csrf = extract_csrf_from_html(response.text, final_url)
-        session_id = extract_session_id_from_html(response.text, final_url)
+            final_url = str(response.url)
 
-        logger.debug("Authentication tokens obtained successfully")
-        return csrf, session_id
+            # Check if we were redirected to login
+            if is_google_auth_redirect(final_url):
+                last_error = ValueError(
+                    "Authentication expired or invalid. "
+                    "Redirected to: " + final_url + "\n"
+                    "Run 'notebooklm login' to re-authenticate."
+                )
+                continue
+
+            try:
+                csrf = extract_csrf_from_html(response.text, final_url)
+                session_id = extract_session_id_from_html(response.text, final_url)
+            except ValueError as e:
+                last_error = e
+                continue
+
+            logger.debug("Authentication tokens obtained successfully")
+            return csrf, session_id
+
+    if last_error:
+        raise last_error
+    raise ValueError("Authentication token fetch failed.")

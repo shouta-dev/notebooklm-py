@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from ._core import ClientCore
+from ._domains import get_base_url
 from ._url_utils import is_youtube_url
 from .exceptions import ValidationError
 from .rpc import UPLOAD_URL, RPCError, RPCMethod
@@ -1177,12 +1178,13 @@ class SourcesAPI:
 
         url = f"{UPLOAD_URL}?authuser=0"
 
+        base_url = get_base_url()
         headers = {
             "Accept": "*/*",
             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
             "Cookie": self._core.auth.cookie_header,
-            "Origin": "https://notebooklm.google.com",
-            "Referer": "https://notebooklm.google.com/",
+            "Origin": base_url,
+            "Referer": f"{base_url}/",
             "x-goog-authuser": "0",
             "x-goog-upload-command": "start",
             "x-goog-upload-header-content-length": str(file_size),
@@ -1219,12 +1221,13 @@ class SourcesAPI:
             upload_url: The resumable upload URL from _start_resumable_upload.
             file_path: Path to the file to upload.
         """
+        base_url = get_base_url()
         headers = {
             "Accept": "*/*",
             "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
             "Cookie": self._core.auth.cookie_header,
-            "Origin": "https://notebooklm.google.com",
-            "Referer": "https://notebooklm.google.com/",
+            "Origin": base_url,
+            "Referer": f"{base_url}/",
             "x-goog-authuser": "0",
             "x-goog-upload-command": "upload, finalize",
             "x-goog-upload-offset": "0",

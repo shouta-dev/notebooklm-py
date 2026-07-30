@@ -26,6 +26,7 @@ from pathlib import Path
 from ._artifacts import ArtifactsAPI
 from ._chat import ChatAPI
 from ._core import DEFAULT_TIMEOUT, ClientCore
+from ._domains import get_base_urls
 from ._notebooks import NotebooksAPI
 from ._notes import NotesAPI
 from ._research import ResearchAPI
@@ -155,13 +156,19 @@ class NotebookLMClient:
             ValueError: If token extraction fails (page structure may have changed).
         """
         http_client = self._core.get_http_client()
-        response = await http_client.get("https://notebooklm.google.com/")
-        response.raise_for_status()
+        response = None
+        for base_url in get_base_urls():
+            response = await http_client.get(f"{base_url}/")
+            response.raise_for_status()
 
-        # Check for redirect to login page
-        final_url = str(response.url)
-        if is_google_auth_redirect(final_url):
+            # Check for redirect to login page
+            final_url = str(response.url)
+            if not is_google_auth_redirect(final_url):
+                break
+        else:
             raise ValueError("Authentication expired. Run 'notebooklm login' to re-authenticate.")
+
+        assert response is not None
 
         # Extract SNlM0e (CSRF token) - REQUIRED
         csrf_match = re.search(r'"SNlM0e":"([^"]+)"', response.text)

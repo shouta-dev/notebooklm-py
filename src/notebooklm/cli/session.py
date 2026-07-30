@@ -20,6 +20,7 @@ from typing import Any
 import click
 from rich.table import Table
 
+from .._domains import get_base_url, get_base_urls
 from ..auth import AuthTokens
 from ..client import NotebookLMClient
 from ..paths import (
@@ -182,7 +183,7 @@ def register_session_commands(cli):
             )
 
             page = context.pages[0] if context.pages else context.new_page()
-            page.goto("https://notebooklm.google.com/")
+            page.goto(f"{get_base_url()}/")
 
             console.print("\n[bold green]Instructions:[/bold green]")
             console.print("1. Complete the Google login in the browser window")
@@ -192,7 +193,8 @@ def register_session_commands(cli):
             input("[Press ENTER when logged in] ")
 
             current_url = page.url
-            if "notebooklm.google.com" not in current_url:
+            allowed_hosts = [url.replace("https://", "").replace("http://", "") for url in get_base_urls()]
+            if not any(host in current_url for host in allowed_hosts):
                 console.print(f"[yellow]Warning: Current URL is {current_url}[/yellow]")
                 if not click.confirm("Save authentication anyway?"):
                     context.close()
@@ -419,6 +421,7 @@ def register_session_commands(cli):
         from ..auth import (
             extract_cookies_from_storage,
             fetch_tokens,
+            load_httpx_cookies,
         )
 
         storage_path = get_storage_path()
@@ -497,7 +500,8 @@ def register_session_commands(cli):
         # Check 4: Token fetch (optional)
         if test_fetch:
             try:
-                csrf, session_id = run_async(fetch_tokens(cookies))
+                httpx_cookies = load_httpx_cookies(storage_path if not has_env_var else None)
+                csrf, session_id = run_async(fetch_tokens(httpx_cookies))
                 checks["token_fetch"] = True
                 details["csrf_length"] = len(csrf)
                 details["session_id_length"] = len(session_id)
