@@ -2,13 +2,13 @@
 
 from enum import Enum
 
-from .._domains import get_base_url
+from .._domains import get_base_url, get_upload_base_url
 
 # NotebookLM API endpoints
 _BASE_URL = get_base_url()
 BATCHEXECUTE_URL = f"{_BASE_URL}/_/LabsTailwindUi/data/batchexecute"
 QUERY_URL = f"{_BASE_URL}/_/LabsTailwindUi/data/google.internal.labs.tailwind.orchestration.v1.LabsTailwindOrchestrationService/GenerateFreeFormStreamed"
-UPLOAD_URL = f"{_BASE_URL}/upload/_/"
+UPLOAD_URL = f"{get_upload_base_url()}/upload/_/"
 
 
 class RPCMethod(str, Enum):

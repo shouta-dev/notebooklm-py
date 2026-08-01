@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from ._core import ClientCore
-from ._domains import get_base_url
+from ._domains import get_base_url, get_upload_base_url
 from ._url_utils import is_youtube_url
 from .exceptions import ValidationError
 from .rpc import UPLOAD_URL, RPCError, RPCMethod
@@ -1178,7 +1178,7 @@ class SourcesAPI:
 
         url = f"{UPLOAD_URL}?authuser=0"
 
-        base_url = get_base_url()
+        base_url = get_upload_base_url()
         headers = {
             "Accept": "*/*",
             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
