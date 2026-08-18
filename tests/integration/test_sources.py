@@ -485,7 +485,7 @@ class TestAddFileSource:
         httpx_mock.add_response(
             url=re.compile(r".*upload/_/\?authuser=0$"),
             headers={
-                "x-goog-upload-url": "https://notebooklm.google.com/upload/_/?authuser=0&upload_id=test_upload_id",
+                "x-goog-upload-url": "https://notebook.google.com/upload/_/?authuser=0&upload_id=test_upload_id",
                 "x-goog-upload-status": "active",
             },
             content=b"",
@@ -540,7 +540,7 @@ class TestAddFileSource:
         httpx_mock.add_response(url=re.compile(r".*batchexecute.*"), content=rpc_response.encode())
         httpx_mock.add_response(
             url=re.compile(r".*upload/_/\?authuser=0$"),
-            headers={"x-goog-upload-url": "https://notebooklm.google.com/upload/_/?upload_id=x"},
+            headers={"x-goog-upload-url": "https://notebook.google.com/upload/_/?upload_id=x"},
         )
         httpx_mock.add_response(url=re.compile(r".*upload_id=.*"), content=b"OK")
 
@@ -591,7 +591,7 @@ class TestAddFileSource:
         httpx_mock.add_response(url=re.compile(r".*batchexecute.*"), content=rpc_response.encode())
         httpx_mock.add_response(
             url=re.compile(r".*upload/_/\?authuser=0$"),
-            headers={"x-goog-upload-url": "https://notebooklm.google.com/upload/_/?upload_id=y"},
+            headers={"x-goog-upload-url": "https://notebook.google.com/upload/_/?upload_id=y"},
         )
         httpx_mock.add_response(url=re.compile(r".*upload_id=.*"), content=b"OK")
 
@@ -633,7 +633,7 @@ class TestAddFileSource:
         httpx_mock.add_response(url=re.compile(r".*batchexecute.*"), content=rpc_response.encode())
         httpx_mock.add_response(
             url=re.compile(r".*upload/_/\?authuser=0$"),
-            headers={"x-goog-upload-url": "https://notebooklm.google.com/upload/_/?upload_id=z"},
+            headers={"x-goog-upload-url": "https://notebook.google.com/upload/_/?upload_id=z"},
         )
         httpx_mock.add_response(url=re.compile(r".*upload_id=.*"), content=b"OK")
 

@@ -22,12 +22,12 @@ def get_legacy_base_url() -> str:
 def get_upload_base_url() -> str:
     """Return the host used by the resumable upload endpoint.
 
-    Gemini Notebook currently serves the app on notebook.google.com, but file
-    uploads still succeed against the legacy NotebookLM host. Keep upload
-    routing separate from normal RPC routing so create/list/ask can follow the
-    app host without breaking source uploads.
+    File uploads now use the same Gemini Notebook host as normal RPCs. Keep an
+    independent override because this is an undocumented endpoint, but do not
+    silently fall back to the legacy host when Google rejects the configured
+    route.
     """
-    return os.environ.get("NOTEBOOKLM_UPLOAD_BASE_URL", LEGACY_BASE_URL).rstrip("/")
+    return os.environ.get("NOTEBOOKLM_UPLOAD_BASE_URL", get_base_url()).rstrip("/")
 
 
 def get_base_urls() -> list[str]:

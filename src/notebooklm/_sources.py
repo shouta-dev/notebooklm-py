@@ -9,12 +9,11 @@ from datetime import datetime
 from pathlib import Path
 from time import monotonic
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlparse, urlsplit
 
 import httpx
 
 from ._core import ClientCore
-from ._domains import get_base_url, get_upload_base_url
 from ._url_utils import is_youtube_url
 from .exceptions import ValidationError
 from .rpc import UPLOAD_URL, RPCError, RPCMethod
@@ -29,6 +28,54 @@ from .types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _default_port(scheme: str) -> int | None:
+    return {"https": 443}.get(scheme)
+
+
+def _normalize_upload_path(path: str) -> str:
+    return path.rstrip("/") or "/"
+
+
+def _validate_resumable_upload_url(upload_url: str) -> str:
+    """Googleが返したupload URLを、設定済みendpointへ厳格に限定する。"""
+    try:
+        actual = urlsplit(upload_url)
+        expected = urlsplit(UPLOAD_URL)
+        actual_port = actual.port or _default_port(actual.scheme)
+        expected_port = expected.port or _default_port(expected.scheme)
+    except ValueError as exc:
+        raise ValidationError("Upload URL is not valid") from exc
+
+    if actual.scheme != "https":
+        raise ValidationError("Upload URL must use https")
+    if actual.username is not None or actual.password is not None:
+        raise ValidationError("Upload URL must not contain credentials")
+    if actual.hostname is None:
+        raise ValidationError("Upload URL must include a host")
+    if actual.hostname != expected.hostname or actual_port != expected_port:
+        raise ValidationError("Upload URL host is not trusted")
+    if _normalize_upload_path(actual.path) != _normalize_upload_path(expected.path):
+        raise ValidationError("Upload URL path is not trusted")
+
+    upload_ids = [
+        value
+        for key, value in parse_qsl(actual.query, keep_blank_values=True)
+        if key.lower() == "upload_id"
+    ]
+    if len(upload_ids) != 1 or not upload_ids[0]:
+        raise ValidationError("Upload URL must include exactly one non-empty upload_id")
+
+    return upload_url
+
+
+def _upload_url_origin(validated_upload_url: str) -> str:
+    """設定済みまたは検証済みのupload URLからOriginを生成する。"""
+    parsed = urlsplit(validated_upload_url)
+    port = parsed.port
+    port_suffix = "" if port in (None, _default_port(parsed.scheme)) else f":{port}"
+    return f"{parsed.scheme}://{parsed.hostname}{port_suffix}"
 
 
 def _template_block() -> list[Any]:
@@ -65,11 +112,21 @@ class SourcesAPI:
     async def _get_upload_client(self) -> httpx.AsyncClient:
         """Get a shared httpx client for upload operations (lazy-initialized)."""
         if self._upload_client is None:
+            options: dict[str, Any] = {
+                "timeout": httpx.Timeout(connect=30.0, read=300.0, write=300.0, pool=300.0),
+                "limits": httpx.Limits(max_connections=30, max_keepalive_connections=20),
+            }
+            if self._core.auth.httpx_cookies is not None:
+                options["cookies"] = self._core.auth.httpx_cookies
             self._upload_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(connect=30.0, read=300.0, write=300.0, pool=300.0),
-                limits=httpx.Limits(max_connections=30, max_keepalive_connections=20),
+                **options,
             )
         return self._upload_client
+
+    def _add_legacy_cookie_header(self, headers: dict[str, str]) -> None:
+        """手組みAuthTokensとの後方互換。通常CLIはdomain-aware jarを使う。"""
+        if self._core.auth.httpx_cookies is None:
+            headers["Cookie"] = self._core.auth.cookie_header
 
     async def close(self) -> None:
         """Close the shared upload client."""
@@ -566,9 +623,7 @@ class SourcesAPI:
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         errors = [
-            (fp, r)
-            for fp, r in zip(resolved, results, strict=True)
-            if isinstance(r, Exception)
+            (fp, r) for fp, r in zip(resolved, results, strict=True) if isinstance(r, Exception)
         ]
         successes: list[Source] = [r for r in results if isinstance(r, Source)]
 
@@ -1143,7 +1198,9 @@ class SourcesAPI:
         missing_titles = sorted(set(filenames) - set(returned_titles))
         unexpected_titles = sorted(set(returned_titles) - set(filenames))
         duplicate_titles = sorted(
-            title for title, count in {t: returned_titles.count(t) for t in returned_titles}.items() if count > 1
+            title
+            for title, count in {t: returned_titles.count(t) for t in returned_titles}.items()
+            if count > 1
         )
 
         if (
@@ -1178,11 +1235,11 @@ class SourcesAPI:
 
         url = f"{UPLOAD_URL}?authuser=0"
 
-        base_url = get_upload_base_url()
+        # URL・Origin・検証対象は、import時に確定した同じ正本を使う。
+        base_url = _upload_url_origin(UPLOAD_URL)
         headers = {
             "Accept": "*/*",
             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-            "Cookie": self._core.auth.cookie_header,
             "Origin": base_url,
             "Referer": f"{base_url}/",
             "x-goog-authuser": "0",
@@ -1190,6 +1247,7 @@ class SourcesAPI:
             "x-goog-upload-header-content-length": str(file_size),
             "x-goog-upload-protocol": "resumable",
         }
+        self._add_legacy_cookie_header(headers)
 
         body = json.dumps(
             {
@@ -1205,11 +1263,9 @@ class SourcesAPI:
 
         upload_url = response.headers.get("x-goog-upload-url")
         if not upload_url:
-            raise SourceAddError(
-                filename, message="Failed to get upload URL from response headers"
-            )
+            raise SourceAddError(filename, message="Failed to get upload URL from response headers")
 
-        return upload_url
+        return _validate_resumable_upload_url(upload_url)
 
     async def _upload_file_streaming(self, upload_url: str, file_path: Path) -> None:
         """Stream upload file content to the resumable upload URL.
@@ -1221,17 +1277,18 @@ class SourcesAPI:
             upload_url: The resumable upload URL from _start_resumable_upload.
             file_path: Path to the file to upload.
         """
-        base_url = get_base_url()
+        upload_url = _validate_resumable_upload_url(upload_url)
+        origin = _upload_url_origin(upload_url)
         headers = {
             "Accept": "*/*",
             "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
-            "Cookie": self._core.auth.cookie_header,
-            "Origin": base_url,
-            "Referer": f"{base_url}/",
+            "Origin": origin,
+            "Referer": f"{origin}/",
             "x-goog-authuser": "0",
             "x-goog-upload-command": "upload, finalize",
             "x-goog-upload-offset": "0",
         }
+        self._add_legacy_cookie_header(headers)
 
         # Stream the file content instead of loading it all into memory
         async def file_stream():
